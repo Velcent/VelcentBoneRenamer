@@ -36,21 +36,35 @@ if not os.path.exists(TEMPLATES_DIR):
 # ============================================================
 # SIDE DETECTION (L/R) — 1 sumber kebenaran untuk semua fungsi
 # ============================================================
-
 SIDE_TOKEN = "{side}"          # placeholder posisi L/R di dalam base_name
-_TOKEN = r'(?:Left|Right|left|right|L|R|l|r)'
+
+# Token untuk semua variasi side
+_TOKEN = r'(?:LEFT|RIGHT|Left|Right|left|right|L|R|l|r)'
 _SEP = r'[_.\-]'
 
-# urutan penting: yang paling spesifik dulu
-_SIDE_PATTERNS = (
-    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')$'),            # Bone_L / Bone.left
-    re.compile(r'^(?P<side>' + _TOKEN + r')(?P<sep>' + _SEP + r')'),            # L_Bone / left.Bone
-    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')(?=' + _SEP + r')'),  # Bone_L_Tip
-    re.compile(r'(?<=[a-z0-9])(?P<side>Left|Right|L|R)$'),                      # upperarmL / upperarmLeft
-    re.compile(r'^(?P<side>Left|Right|L|R)(?=[A-Z][a-z])'),                     # LUpperarm / LeftUpperarm
-    re.compile(r'(?<=[a-z0-9])(?P<side>L|R)(?=[A-Z][a-z])'),                    # upperarmLTip
-)
+# Token khusus untuk prefix/middle CamelCase (tanpa separator)
+_CAMEL_TOKEN = r'(?:LEFT|RIGHT|Left|Right|L|R)'
 
+# Urutan penting: yang paling spesifik dulu
+_SIDE_PATTERNS = (
+    # 1. Suffix dengan separator: Bone_L, Bone.LEFT, Bone.left
+    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')$'),
+    
+    # 2. Prefix dengan separator: L_Bone, LEFT.Bone, left_Bone
+    re.compile(r'^(?P<side>' + _TOKEN + r')(?P<sep>' + _SEP + r')'),
+    
+    # 3. Middle dengan separator: Bone_L_Tip, Bone_LEFT_Tip
+    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')(?=' + _SEP + r')'),
+    
+    # 4. Suffix tanpa separator: upperarmL, upperarmLEFT, upperarmLeft
+    re.compile(r'(?<=[a-z0-9])(?P<side>' + _TOKEN + r')$'),
+    
+    # 5. Prefix tanpa separator (CamelCase): LUpperarm, LEFTUpperarm, LeftUpperarm
+    re.compile(r'^(?P<side>' + _CAMEL_TOKEN + r')(?=[A-Z][a-z])'),
+    
+    # 6. Middle tanpa separator (CamelCase): upperarmLTip, upperarmLEFTTip
+    re.compile(r'(?<=[a-z0-9])(?P<side>' + _CAMEL_TOKEN + r')(?=[A-Z][a-z])'),
+)
 
 def get_case_type(suffix):
     """Tentukan case type dari token side"""
@@ -62,15 +76,14 @@ def get_case_type(suffix):
         return 'title'
     if suffix in ('left', 'right'):
         return 'lower_title'
-    elif suffix in ['LEFT', 'RIGHT']:
+    if suffix in ('LEFT', 'RIGHT'):
         return 'upper_title'
     return 'upper'
-
 
 def parse_side_name(name):
     """
     Parser UTAMA. Return:
-      (base_name, separator, case_type, is_prefix, side)
+    (base_name, separator, case_type, is_prefix, side)
     - base_name mengandung placeholder {side} di posisi token aslinya
     - side = 'L' / 'R' / None (None = tidak ada side valid)
     """
@@ -81,18 +94,18 @@ def parse_side_name(name):
         token = m.group('side')
         base_name = name[:m.start('side')] + SIDE_TOKEN + name[m.end('side'):]
         separator = m.groupdict().get('sep') or ''
-        side = 'L' if token in ('L', 'l', 'Left', 'left') else 'R'
+        
+        # Penentuan side L/R lebih bersih dan mendukung semua variasi (L, l, Left, LEFT, dll)
+        side = 'L' if token.upper().startswith('L') else 'R'
         is_prefix = (m.start('side') == 0)
+        
         return base_name, separator, get_case_type(token), is_prefix, side
-
     return name, '', 'upper', False, None
-
 
 def get_base_name_and_suffix(name):
     """Wrapper backward-compatible (4 nilai, tanpa side)"""
     base, sep, case, is_prefix, _side = parse_side_name(name)
     return base, sep, case, is_prefix
-
 
 def format_side(side, base_name, separator, case_type, is_prefix=False):
     """
@@ -105,6 +118,8 @@ def format_side(side, base_name, separator, case_type, is_prefix=False):
         label = 'Left' if side == 'L' else 'Right'
     elif case_type == 'lower_title':
         label = 'left' if side == 'L' else 'right'
+    elif case_type == 'upper_title':
+        label = 'LEFT' if side == 'L' else 'RIGHT'
     else:
         label = side
 
@@ -116,11 +131,9 @@ def format_side(side, base_name, separator, case_type, is_prefix=False):
         return f"{label}{separator}{base_name}"
     return f"{base_name}{separator}{label}"
 
-
 def format_suffix(side, separator, case_type):
     """Wrapper lama, biar kode lain tidak error"""
     return format_side(side, '', separator, case_type, is_prefix=False)
-    
 
 def find_mirror_bone(bone, all_bones):
     """Cari bone pasangan mirror"""
