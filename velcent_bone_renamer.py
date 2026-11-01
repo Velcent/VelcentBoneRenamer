@@ -131,6 +131,13 @@ def update_vertex_groups(armature):
 
     return updated_count
 
+def update_new_name_l(self, context):
+    """Auto-update new_name_r saat new_name_l diedit"""
+    base, sep, case = get_base_name_and_suffix(self.new_name_l)
+    # Cek apakah new_name_l memiliki suffix L/R
+    if re.search(r'(L|R|l|r|Left|left|Right|right)$', self.new_name_l):
+        self.new_name_r = base + format_suffix('R', sep, case)
+
 # ============================================================
 # TEMPLATE FILE MANAGEMENT
 # ============================================================
@@ -173,7 +180,7 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
     # Untuk mirror pair
     old_name_l: StringProperty(name="Old Name L")
     old_name_r: StringProperty(name="Old Name R")
-    new_name_l: StringProperty(name="New Name L")
+    new_name_l: StringProperty(name="New Name L", update=update_new_name_l)
     new_name_r: StringProperty(name="New Name R")
 
     def to_dict(self):
