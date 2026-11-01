@@ -294,24 +294,31 @@ class TEMPLATE_ITEM(PropertyGroup):
 class TEMPLATE_UL_bone_list(UIList):
     """UIList untuk menampilkan bone di template"""
     bl_idname = "TEMPLATE_UL_bone_list"
-
+    
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        # Layout utama
-        row = layout.row(align=True)
-
-        # Icon: Menggunakan BONE_DATA untuk semua agar terlihat bersih seperti gambar kedua
-        row.label(text="", icon='BONE_DATA')
-
-        # Tampilkan mapping langsung di list
+        # ===== KOLOM 1: Icon (Mirror / Single) - 5% lebar =====
+        split = layout.split(factor=0.05)
+        col_icon = split.column()
+        
         if item.is_mirror:
-            # Untuk mirror pair, tampilkan sisi L sebagai utama (bisa diedit)
-            row.prop(item, "old_name_l", text="", emboss=False)
-            row.label(text="→")
-            row.prop(item, "new_name_l", text="")
-            # Opsional: Tampilkan info sisi R di sebelah kanan (read-only)
-            # row.label(text=f"  [R: {item.old_name_r} → {item.new_name_r}]")
+            col_icon.label(text="", icon='MOD_MIRROR')  # Icon cermin untuk mirror pair
         else:
-            # Untuk single bone
+            col_icon.label(text="", icon='BONE_DATA')   # Icon tulang biasa untuk single bone
+        
+        # ===== KOLOM 2: Konten utama (Old → New) - 95% lebar =====
+        row = split.row(align=True)
+        
+        if item.is_mirror:
+            # Old name L (compact, tanpa emboss)
+            row.prop(item, "old_name_l", text="", emboss=False)
+            
+            # Arrow (label text otomatis kecil)
+            row.label(text="→")
+            
+            # New name L (luas, bisa diedit)
+            row.prop(item, "new_name_l", text="")
+        else:
+            # Single bone
             row.prop(item, "old_name", text="", emboss=False)
             row.label(text="→")
             row.prop(item, "new_name", text="")
