@@ -1046,6 +1046,106 @@ class TEMPLATE_OT_select_template(bpy.types.Operator):
 
 
 # ============================================================
+# OPERATORS - SORT & MOVE BONES
+# ============================================================
+class TEMPLATE_OT_sort_bones(bpy.types.Operator):
+    """Urutkan bone di template aktif (Ascending/Descending)"""
+    bl_idname = "bone_renamer.sort_bones"
+    bl_label = "Sort Bones"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    order: EnumProperty(
+        items=[
+            ('ASC', "Ascending (A-Z)", "Sort A to Z"),
+            ('DESC', "Descending (Z-A)", "Sort Z to A")
+        ],
+        default='ASC'
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        bones = scene.bone_renamer_bone_list
+        if len(bones) < 2:
+            return {'CANCELLED'}
+        
+        # Simpan nama bone yang sedang aktif agar tidak hilang setelah sort
+        active_idx = scene.bone_renamer_active_bone_index
+        active_name = ""
+        if 0 <= active_idx < len(bones):
+            item = bones[active_idx]
+            active_name = item.old_name_l if item.is_mirror else item.old_name
+        
+        # Convert ke list of dict untuk di-sort
+        bone_list = [item.to_dict() for item in bones]
+        
+        # Tentukan key untuk sorting
+        def get_sort_key(b):
+            if b['is_mirror']:
+                return b['old_name_l']
+            return b['old_name']
+            
+        reverse = (self.order == 'DESC')
+        bone_list.sort(key=get_sort_key, reverse=reverse)
+        
+        # Clear dan re-add
+        bones.clear()
+        for b_data in bone_list:
+            item = bones.add()
+            item.from_dict(b_data)
+            
+        # Kembalikan active index ke bone yang tadi dipilih
+        for i, item in enumerate(bones):
+            name = item.old_name_l if item.is_mirror else item.old_name
+            if name == active_name:
+                scene.bone_renamer_active_bone_index = i
+                break
+                
+        # Save ke file
+        template = get_active_template(scene)
+        if template:
+            template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_scene_templates_to_file(scene)
+        
+        return {'FINISHED'}
+
+class TEMPLATE_OT_move_bone(bpy.types.Operator):
+    """Pindah bone ke atas/bawah di list"""
+    bl_idname = "bone_renamer.move_bone"
+    bl_label = "Move Bone"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    direction: EnumProperty(
+        items=[
+            ('UP', "Up", "Move up"),
+            ('DOWN', "Down", "Move down")
+        ]
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        bones = scene.bone_renamer_bone_list
+        idx = scene.bone_renamer_active_bone_index
+        
+        if idx < 0 or idx >= len(bones):
+            return {'CANCELLED'}
+            
+        if self.direction == 'UP' and idx > 0:
+            bones.move(idx, idx - 1)
+            scene.bone_renamer_active_bone_index = idx - 1
+        elif self.direction == 'DOWN' and idx < len(bones) - 1:
+            bones.move(idx, idx + 1)
+            scene.bone_renamer_active_bone_index = idx + 1
+            
+        # Save ke file
+        template = get_active_template(scene)
+        if template:
+            template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_scene_templates_to_file(scene)
+        
+        return {'FINISHED'}
+
+
+# ============================================================
 # UI PANEL
 # ============================================================
 class VIEW3D_PT_bone_renamer(Panel):
@@ -1140,6 +1240,19 @@ class VIEW3D_PT_bone_renamer(Panel):
             col.operator("bone_renamer.remove_bone", text="", icon='REMOVE')
             col.operator("bone_renamer.clear_bones", text="", icon='TRASH')
             col.separator()
+            
+            # --- SORT BUTTONS ---
+            op_asc = col.operator("bone_renamer.sort_bones", text="", icon='SORT_ASC')
+            op_asc.order = 'ASC'
+            op_desc = col.operator("bone_renamer.sort_bones", text="", icon='SORT_DESC')
+            op_desc.order = 'DESC'
+            col.separator()
+            
+            # --- MOVE BUTTONS ---
+            col.operator("bone_renamer.move_bone", text="", icon='TRIA_UP').direction = 'UP'
+            col.operator("bone_renamer.move_bone", text="", icon='TRIA_DOWN').direction = 'DOWN'
+            col.separator()
+            
             col.operator("bone_renamer.select_bone", text="", icon='RESTRICT_SELECT_OFF')
 
             # ===== APPLY RENAME =====
@@ -1171,6 +1284,8 @@ classes = (
     TEMPLATE_OT_import,
     TEMPLATE_OT_refresh,
     TEMPLATE_OT_select_template,
+    TEMPLATE_OT_sort_bones,
+    TEMPLATE_OT_move_bone,
     VIEW3D_PT_bone_renamer,
 )
 
