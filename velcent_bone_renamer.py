@@ -329,6 +329,7 @@ class TEMPLATE_ITEM(PropertyGroup):
     name: StringProperty(name="Template Name")
     created: StringProperty(name="Created")
     modified: StringProperty(name="Modified")
+    bone_count: IntProperty(name="Bone Count", default=0)
 
 
 # ============================================================
@@ -409,6 +410,7 @@ def load_templates_to_scene(scene):
         item.name = t_name
         item.created = t_data.get("created", "")
         item.modified = t_data.get("modified", "")
+        item.bone_count = len(t_data.get("bones", []))
 
         if t_name == active_name:
             active_idx = i
@@ -421,27 +423,30 @@ def load_templates_to_scene(scene):
 
 def save_scene_templates_to_file(scene):
     """Save scene templates ke file"""
+    old_data = load_templates_data()
     data = {"templates": {}, "active_template": ""}
     templates = get_all_templates(scene)
     active_idx = get_active_template_index(scene)
 
     for i, t_item in enumerate(templates):
         t_name = t_item.name
-        bones_collection = scene.bone_renamer_bone_list if i == active_idx else []
-
-        # Convert bones ke list of dict
-        bones_data = []
-        for bone_item in bones_collection:
-            bones_data.append(bone_item.to_dict())
-
+        
+        if i == active_idx:
+            bones_collection = scene.bone_renamer_bone_list
+            bones_data = [bone_item.to_dict() for bone_item in bones_collection]
+            t_item.bone_count = len(bones_data)
+            data["active_template"] = t_name
+        else:
+            old_template_data = old_data.get("templates", {}).get(t_name, {})
+            bones_data = old_template_data.get("bones", [])
+            t_item.bone_count = len(bones_data)
+            
         data["templates"][t_name] = {
             "created": t_item.created,
             "modified": t_item.modified,
             "bones": bones_data
         }
-        if i == active_idx:
-            data["active_template"] = t_name
-
+        
     save_templates_data(data)
 
 
@@ -581,6 +586,7 @@ class TEMPLATE_OT_new(bpy.types.Operator):
             return {'CANCELLED'}
 
         scene = context.scene
+        save_scene_templates_to_file(scene) 
         templates = get_all_templates(scene)
 
         # Cek duplikat
@@ -621,6 +627,7 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
+        save_scene_templates_to_file(scene)
         templates = get_all_templates(scene)
         idx = get_active_template_index(scene)
 
@@ -637,7 +644,7 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
         else:
             scene.bone_renamer_active_template_index = 0
 
-        scene.bone_renamer_bone_list.clear()
+        load_active_template_bones(scene)
 
         # Save ke file
         save_scene_templates_to_file(scene)
@@ -981,6 +988,8 @@ class TEMPLATE_OT_import(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
+        save_scene_templates_to_file(scene)
+
         try:
             with open(self.filepath, 'r', encoding='utf-8') as f:
                 import_data = json.load(f)
@@ -1059,6 +1068,7 @@ class TEMPLATE_OT_select_template(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
+        save_scene_templates_to_file(scene)
         scene.bone_renamer_active_template_index = self.index
         load_active_template_bones(scene)
         return {'FINISHED'}
@@ -1222,7 +1232,7 @@ class VIEW3D_PT_bone_renamer(Panel):
                 # Nama template
                 row.label(text=t.name)
                 # Jumlah bone
-                bone_count = len(scene.bone_renamer_bone_list) if i == active_idx else "?"
+                bone_count = t.bone_count
                 row.label(text=f"({bone_count})", icon='BONE_DATA')
         else:
             box.label(text="Belum ada template", icon='INFO')
