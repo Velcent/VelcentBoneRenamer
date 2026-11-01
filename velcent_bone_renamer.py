@@ -339,18 +339,22 @@ def load_active_template_bones(scene):
         bone_item = scene.bone_renamer_bone_list.add()
         bone_item.from_dict(bone_data)
 
-def add_bones_to_active_template(scene, bones_to_add):
+def add_bones_to_active_template(scene, bones_to_add, armature_obj):
     """
     Tambah bones ke template aktif dengan mirror detection
     bones_to_add: list of edit_bones yang terseleksi
+    armature_obj: objek armature aktif
     """
     template = get_active_template(scene)
     if not template:
-        return 0
+        return 0, 0
 
     bones_collection = scene.bone_renamer_bone_list
+    
+    # PERBAIKAN: Ambil SEMUA edit bones dari armature, bukan hanya yang terseleksi
+    all_edit_bones = armature_obj.data.edit_bones
 
-    # PERBAIKAN: Buat set dari bone yang sudah ada di template
+    # Buat set dari bone yang sudah ada di template
     existing_bones = set()
     for item in bones_collection:
         if item.is_mirror:
@@ -367,37 +371,36 @@ def add_bones_to_active_template(scene, bones_to_add):
         if bone.name in processed:
             continue
 
-        # PERBAIKAN: Skip jika bone sudah ada di template
+        # PERBAIKAN: Cari mirror pair di SELURUH armature
+        mirror_bone = find_mirror_bone(bone, all_edit_bones)
+
+        # Skip jika bone ini sendiri sudah ada di template
         if bone.name in existing_bones:
             skipped_count += 1
             processed.add(bone.name)
             continue
 
-        # Cari mirror pair
-        mirror_bone = find_mirror_bone(bone, bones_to_add)
-
-        # PERBAIKAN: Skip jika mirror pair sudah ada di template
+        # PERBAIKAN BARU: Skip jika mirror dari bone ini sudah ada di template
         if mirror_bone and mirror_bone.name in existing_bones:
             skipped_count += 1
             processed.add(bone.name)
-            processed.add(mirror_bone.name)
             continue
 
         # Parse nama bone
         base_name, separator, case_type = get_base_name_and_suffix(bone.name)
 
         if mirror_bone:
-            # Mirror pair ditemukan
+            # Mirror pair ditemukan dan belum ada di template
             processed.add(bone.name)
             processed.add(mirror_bone.name)
 
-            # Tentukan mana L dan mana R
+            # Tentukan mana L dan mana R berdasarkan posisi X
             if bone.head.x > 0:
                 l_bone, r_bone = bone, mirror_bone
             else:
                 l_bone, r_bone = mirror_bone, bone
 
-            # Buat bone item baru
+            # Buat bone item baru sebagai mirror pair
             bone_item = bones_collection.add()
             bone_item.base_name = base_name
             bone_item.separator = separator
@@ -426,11 +429,8 @@ def add_bones_to_active_template(scene, bones_to_add):
     # Save ke file
     save_scene_templates_to_file(scene)
 
-    # Report dengan info yang lebih lengkap
-    if skipped_count > 0:
-        print(f"Info: {skipped_count} bone sudah ada di template, dilewati")
-
-    return added_count
+    # Return jumlah yang ditambah dan yang di-skip
+    return added_count, skipped_count
 
 # ============================================================
 # OPERATORS - TEMPLATE MANAGEMENT
@@ -530,15 +530,14 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
     def execute(self, context):
         obj = context.object
         scene = context.scene
-
+        
         if not obj or obj.type != 'ARMATURE':
             self.report({'ERROR'}, "Silakan pilih objek Armature")
             return {'CANCELLED'}
-
         if obj.mode != 'EDIT':
             self.report({'ERROR'}, "Harus di Edit Mode")
             return {'CANCELLED'}
-
+            
         template = get_active_template(scene)
         if not template:
             self.report({'ERROR'}, "Tidak ada template aktif. Buat template baru dulu.")
@@ -549,8 +548,15 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
             self.report({'WARNING'}, "Tidak ada bone yang terseleksi")
             return {'CANCELLED'}
 
-        added_count = add_bones_to_active_template(scene, selected)
-        self.report({'INFO'}, f"{added_count} bone entry ditambahkan ke template '{template.name}'")
+        # PERBAIKAN: Kirim objek armature (obj) ke fungsi helper
+        added_count, skipped_count = add_bones_to_active_template(scene, selected, obj)
+
+        # Laporan hasil yang lebih detail
+        msg = f"{added_count} bone entry ditambahkan ke template '{template.name}'."
+        if skipped_count > 0:
+            msg += f" ({skipped_count} bone dilewati karena sudah ada di template atau mirrornya sudah ada)."
+            
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 class TEMPLATE_OT_remove_bone(bpy.types.Operator):
