@@ -800,6 +800,7 @@ class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
             self.report({'ERROR'}, "Silakan pilih objek Armature")
             return {'CANCELLED'}
 
+        # Izinkan EDIT, POSE, dan OBJECT mode
         if obj.mode not in ('EDIT', 'POSE', 'OBJECT'):
             self.report({'ERROR'}, "Harus di Edit, Pose, atau Object Mode")
             return {'CANCELLED'}
@@ -816,38 +817,62 @@ class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
 
         # Simpan mode awal untuk dikembalikan nanti
         original_mode = obj.mode
-
-        # Rename HANYA bisa di EDIT mode, jadi sementara switch ke EDIT
-        if obj.mode != 'EDIT':
-            bpy.ops.object.mode_set(mode='EDIT')
-
         renamed_count = 0
-        edit_bones = obj.data.edit_bones
 
-        # Rename semua bone di template
-        for bone_item in bones:
-            if bone_item.is_mirror:
-                if bone_item.old_name_l in edit_bones and \
-                   bone_item.old_name_l != bone_item.new_name_l:
-                    if bone_item.new_name_l not in edit_bones:
-                        edit_bones[bone_item.old_name_l].name = bone_item.new_name_l
-                        renamed_count += 1
-                if bone_item.old_name_r in edit_bones and \
-                   bone_item.old_name_r != bone_item.new_name_r:
-                    if bone_item.new_name_r not in edit_bones:
-                        edit_bones[bone_item.old_name_r].name = bone_item.new_name_r
-                        renamed_count += 1
-            else:
-                if bone_item.old_name in edit_bones and \
-                   bone_item.old_name != bone_item.new_name:
-                    if bone_item.new_name not in edit_bones:
-                        edit_bones[bone_item.old_name].name = bone_item.new_name
-                        renamed_count += 1
+        if obj.mode == 'EDIT':
+            # Edit Mode: gunakan edit_bones (seperti sebelumnya)
+            edit_bones = obj.data.edit_bones
+            for bone_item in bones:
+                if bone_item.is_mirror:
+                    # Rename L
+                    if bone_item.old_name_l in edit_bones and \
+                       bone_item.old_name_l != bone_item.new_name_l:
+                        if bone_item.new_name_l not in edit_bones:
+                            edit_bones[bone_item.old_name_l].name = bone_item.new_name_l
+                            renamed_count += 1
+                    # Rename R
+                    if bone_item.old_name_r in edit_bones and \
+                       bone_item.old_name_r != bone_item.new_name_r:
+                        if bone_item.new_name_r not in edit_bones:
+                            edit_bones[bone_item.old_name_r].name = bone_item.new_name_r
+                            renamed_count += 1
+                else:
+                    # Single bone
+                    if bone_item.old_name in edit_bones and \
+                       bone_item.old_name != bone_item.new_name:
+                        if bone_item.new_name not in edit_bones:
+                            edit_bones[bone_item.old_name].name = bone_item.new_name
+                            renamed_count += 1
+        else:
+            # POSE atau OBJECT Mode: gunakan obj.data.bones langsung
+            armature_bones = obj.data.bones
+            for bone_item in bones:
+                if bone_item.is_mirror:
+                    # Rename L
+                    if bone_item.old_name_l in armature_bones and \
+                       bone_item.old_name_l != bone_item.new_name_l:
+                        if bone_item.new_name_l not in armature_bones:
+                            armature_bones[bone_item.old_name_l].name = bone_item.new_name_l
+                            renamed_count += 1
+                    # Rename R
+                    if bone_item.old_name_r in armature_bones and \
+                       bone_item.old_name_r != bone_item.new_name_r:
+                        if bone_item.new_name_r not in armature_bones:
+                            armature_bones[bone_item.old_name_r].name = bone_item.new_name_r
+                            renamed_count += 1
+                else:
+                    # Single bone
+                    if bone_item.old_name in armature_bones and \
+                       bone_item.old_name != bone_item.new_name:
+                        if bone_item.new_name not in armature_bones:
+                            armature_bones[bone_item.old_name].name = bone_item.new_name
+                            renamed_count += 1
 
         self.report({'INFO'}, f"{renamed_count} bone telah di-rename")
 
-        # Update vertex groups butuh OBJECT mode
-        bpy.ops.object.mode_set(mode='OBJECT')
+        # Update vertex groups (butuh OBJECT mode)
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
         vg_count = update_vertex_groups(obj)
 
         # PERBAIKAN: Kembali ke mode AWAL (bukan hardcoded EDIT)
