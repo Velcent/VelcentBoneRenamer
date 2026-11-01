@@ -29,35 +29,49 @@ TEMPLATES_FILE = os.path.join(TEMPLATES_DIR, "templates.json")
 if not os.path.exists(TEMPLATES_DIR):
     os.makedirs(TEMPLATES_DIR)
 
-
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
+def get_case_type(suffix):
+    """Helper untuk menentukan case type dari suffix"""
+    if suffix in ['L', 'R']:
+        return 'upper'
+    elif suffix in ['l', 'r']:
+        return 'lower'
+    elif suffix in ['Left', 'Right']:
+        return 'title'
+    elif suffix in ['left', 'right']:
+        return 'lower_title'
+    return 'upper'
+
 def get_base_name_and_suffix(name):
     """Deteksi suffix L/R dengan berbagai format"""
-    pattern = r'([_\.\\-])?(L|R|l|r|Left|left|Right|right)$'
-    match = re.search(pattern, name)
-
-    if match:
-        base_name = name[:match.start()]
-        separator = match.group(1) or ''
-        suffix = match.group(2)
-
-        if suffix in ['L', 'R']:
-            case_type = 'upper'
-        elif suffix in ['l', 'r']:
-            case_type = 'lower'
-        elif suffix in ['Left', 'Right']:
-            case_type = 'title'
-        elif suffix in ['left', 'right']:
-            case_type = 'lower_title'
-        else:
-            case_type = 'upper'
-
+    # 1. Cek suffix di AKHIR string (format standar: Bone_L, Bone.R, Bone-Left)
+    pattern_end = r'([_.\-])?(L|R|l|r|Left|left|Right|right)$'
+    match_end = re.search(pattern_end, name)
+    if match_end:
+        base_name = name[:match_end.start()]
+        separator = match_end.group(1) or ''
+        suffix = match_end.group(2)
+        case_type = get_case_type(suffix)
         return base_name, separator, case_type
-    else:
-        return name, '', 'upper'
+
+    # 2. Cek suffix di TENGAH string (format khusus: Bone_L_Tip, Bone.R.Tip)
+    pattern_middle = r'([_.\-])(L|R|l|r|Left|left|Right|right)([_.\-])'
+    match_middle = re.search(pattern_middle, name)
+    if match_middle:
+        separator = match_middle.group(1)
+        suffix = match_middle.group(2)
+        # Ambil bagian sebelum dan sesudah L/R
+        before = name[:match_middle.start()]
+        after = name[match_middle.end()-1:]  # -1 untuk menyertakan separator kedua
+        base_name = before + after
+        case_type = get_case_type(suffix)
+        return base_name, separator, case_type
+
+    # 3. Tidak ada suffix yang terdeteksi
+    return name, '', 'upper'
 
 def format_suffix(side, separator, case_type):
     """Format suffix berdasarkan case type"""
@@ -104,7 +118,6 @@ def update_vertex_groups(armature):
         for vg in mesh_obj.vertex_groups:
             if vg.name not in bone_names:
                 base_vg, sep_vg, case_vg = get_base_name_and_suffix(vg.name)
-
                 for bone_name in bone_names:
                     base_bone, sep_bone, case_bone = get_base_name_and_suffix(bone_name)
                     if base_vg == base_bone:
@@ -118,7 +131,6 @@ def update_vertex_groups(armature):
 
     return updated_count
 
-
 # ============================================================
 # TEMPLATE FILE MANAGEMENT
 # ============================================================
@@ -131,7 +143,6 @@ def load_templates_data():
                 return json.load(f)
         except Exception as e:
             print(f"Error loading templates: {e}")
-
     return {"templates": {}, "active_template": ""}
 
 def save_templates_data(data):
@@ -143,7 +154,6 @@ def save_templates_data(data):
     except Exception as e:
         print(f"Error saving templates: {e}")
         return False
-
 
 # ============================================================
 # PROPERTY GROUPS
@@ -200,13 +210,11 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
             self.old_name = data.get('old_name', '')
             self.new_name = data.get('new_name', '')
 
-
 class TEMPLATE_ITEM(PropertyGroup):
     """Item untuk menyimpan 1 template"""
     name: StringProperty(name="Template Name")
     created: StringProperty(name="Created")
     modified: StringProperty(name="Modified")
-
 
 # ============================================================
 # UI LIST
@@ -217,23 +225,25 @@ class TEMPLATE_UL_bone_list(UIList):
     bl_idname = "TEMPLATE_UL_bone_list"
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        # 'item' sudah merepresentasikan TEMPLATE_BONE_ITEM yang sedang di-draw
         # Layout utama
         row = layout.row(align=True)
 
-        # Icon mirror
-        if item.is_mirror:
-            row.label(text="", icon='MOD_MIRROR')
-        else:
-            row.label(text="", icon='BONE_DATA')
+        # Icon: Menggunakan BONE_DATA untuk semua agar terlihat bersih seperti gambar kedua
+        row.label(text="", icon='BONE_DATA')
 
-        # Tampilkan old -> new
+        # Tampilkan mapping langsung di list
         if item.is_mirror:
-            row.label(text=f"{item.old_name_l} → {item.new_name_l}")
-            row.label(text=f"{item.old_name_r} → {item.new_name_r}")
+            # Untuk mirror pair, tampilkan sisi L sebagai utama (bisa diedit)
+            row.prop(item, "old_name_l", text="", emboss=False)
+            row.label(text="→")
+            row.prop(item, "new_name_l", text="")
+            # Opsional: Tampilkan info sisi R di sebelah kanan (read-only)
+            # row.label(text=f"  [R: {item.old_name_r} → {item.new_name_r}]")
         else:
-            row.label(text=f"{item.old_name} → {item.new_name}")
-
+            # Untuk single bone
+            row.prop(item, "old_name", text="", emboss=False)
+            row.label(text="→")
+            row.prop(item, "new_name", text="")
 
 # ============================================================
 # TEMPLATE DATA MANAGEMENT (Runtime)
@@ -289,13 +299,12 @@ def load_templates_to_scene(scene):
 def save_scene_templates_to_file(scene):
     """Save scene templates ke file"""
     data = {"templates": {}, "active_template": ""}
-
     templates = get_all_templates(scene)
     active_idx = get_active_template_index(scene)
 
     for i, t_item in enumerate(templates):
         t_name = t_item.name
-        bones_collection = scene.get(f"bone_renamer_bones_{t_name}", [])
+        bones_collection = scene.bone_renamer_bone_list if i == active_idx else []
 
         # Convert bones ke list of dict
         bones_data = []
@@ -316,19 +325,16 @@ def save_scene_templates_to_file(scene):
 def load_active_template_bones(scene):
     """Load bone list dari template aktif ke scene"""
     scene.bone_renamer_bone_list.clear()
-
     template = get_active_template(scene)
     if not template:
         return
 
     data = load_templates_data()
     t_name = template.name
-
     if t_name not in data.get("templates", {}):
         return
 
     bones_data = data["templates"][t_name].get("bones", [])
-
     for bone_data in bones_data:
         bone_item = scene.bone_renamer_bone_list.add()
         bone_item.from_dict(bone_data)
@@ -341,6 +347,7 @@ def add_bones_to_active_template(scene, bones_to_add):
     template = get_active_template(scene)
     if not template:
         return 0
+
     bones_collection = scene.bone_renamer_bone_list
 
     # PERBAIKAN: Buat set dari bone yang sudah ada di template
@@ -425,7 +432,6 @@ def add_bones_to_active_template(scene, bones_to_add):
 
     return added_count
 
-
 # ============================================================
 # OPERATORS - TEMPLATE MANAGEMENT
 # ============================================================
@@ -476,7 +482,6 @@ class TEMPLATE_OT_new(bpy.types.Operator):
         self.report({'INFO'}, f"Template '{self.name}' telah dibuat")
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_delete(bpy.types.Operator):
     """Hapus template aktif"""
     bl_idname = "bone_renamer.delete_template"
@@ -516,7 +521,6 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
         self.report({'INFO'}, f"Template '{t_name}' telah dihapus")
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
     """Tambahkan bone yang terseleksi ke template aktif (dengan auto mirror detection)"""
     bl_idname = "bone_renamer.add_selected_bones"
@@ -546,10 +550,8 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
             return {'CANCELLED'}
 
         added_count = add_bones_to_active_template(scene, selected)
-
         self.report({'INFO'}, f"{added_count} bone entry ditambahkan ke template '{template.name}'")
         return {'FINISHED'}
-
 
 class TEMPLATE_OT_remove_bone(bpy.types.Operator):
     """Hapus bone yang terpilih dari template"""
@@ -583,7 +585,6 @@ class TEMPLATE_OT_remove_bone(bpy.types.Operator):
         self.report({'INFO'}, "Bone dihapus dari template")
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_clear_bones(bpy.types.Operator):
     """Kosongkan semua bone di template aktif"""
     bl_idname = "bone_renamer.clear_bones"
@@ -605,7 +606,6 @@ class TEMPLATE_OT_clear_bones(bpy.types.Operator):
 
         self.report({'INFO'}, "Semua bone di template telah dihapus")
         return {'FINISHED'}
-
 
 class TEMPLATE_OT_select_bone(bpy.types.Operator):
     """Select bone di armature berdasarkan template item yang aktif"""
@@ -659,7 +659,6 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
         self.report({'INFO'}, f"{selected_count} bone terseleksi")
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
     """Rename bone berdasarkan template aktif + update vertex groups"""
     bl_idname = "bone_renamer.rename_from_template"
@@ -701,7 +700,6 @@ class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
                     if bone_item.new_name_l not in edit_bones:
                         edit_bones[bone_item.old_name_l].name = bone_item.new_name_l
                         renamed_count += 1
-
                 # Rename R
                 if bone_item.old_name_r in edit_bones and \
                    bone_item.old_name_r != bone_item.new_name_r:
@@ -739,13 +737,12 @@ class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
 
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_export(bpy.types.Operator):
     """Export template aktif ke file JSON"""
     bl_idname = "bone_renamer.export_template"
     bl_label = "Export Template"
-
     filename_ext = ".json"
+
     filepath: StringProperty(subtype='FILE_PATH', default="template.json")
 
     def invoke(self, context, event):
@@ -753,7 +750,6 @@ class TEMPLATE_OT_export(bpy.types.Operator):
         if not template:
             self.report({'ERROR'}, "Tidak ada template aktif")
             return {'CANCELLED'}
-
         self.filepath = f"{template.name}.json"
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
@@ -761,7 +757,6 @@ class TEMPLATE_OT_export(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         template = get_active_template(scene)
-
         if not template:
             self.report({'ERROR'}, "Tidak ada template aktif")
             return {'CANCELLED'}
@@ -792,13 +787,12 @@ class TEMPLATE_OT_export(bpy.types.Operator):
 
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_import(bpy.types.Operator):
     """Import template dari file JSON"""
     bl_idname = "bone_renamer.import_template"
     bl_label = "Import Template"
-
     filename_ext = ".json"
+
     filepath: StringProperty(subtype='FILE_PATH')
 
     def invoke(self, context, event):
@@ -807,7 +801,6 @@ class TEMPLATE_OT_import(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-
         try:
             with open(self.filepath, 'r', encoding='utf-8') as f:
                 import_data = json.load(f)
@@ -863,7 +856,6 @@ class TEMPLATE_OT_import(bpy.types.Operator):
         self.report({'INFO'}, f"Template '{template_name}' telah di-import")
         return {'FINISHED'}
 
-
 class TEMPLATE_OT_refresh(bpy.types.Operator):
     """Reload templates dari file"""
     bl_idname = "bone_renamer.refresh"
@@ -875,6 +867,19 @@ class TEMPLATE_OT_refresh(bpy.types.Operator):
         self.report({'INFO'}, "Templates telah di-reload")
         return {'FINISHED'}
 
+class TEMPLATE_OT_select_template(bpy.types.Operator):
+    """Pilih template sebagai aktif"""
+    bl_idname = "bone_renamer.select_template"
+    bl_label = "Select Template"
+    bl_options = {'REGISTER'}
+
+    index: IntProperty()
+
+    def execute(self, context):
+        scene = context.scene
+        scene.bone_renamer_active_template_index = self.index
+        load_active_template_bones(scene)
+        return {'FINISHED'}
 
 # ============================================================
 # UI PANEL
@@ -914,17 +919,14 @@ class VIEW3D_PT_bone_renamer(Panel):
             col = box.column(align=True)
             for i, t in enumerate(templates):
                 row = col.row(align=True)
-
                 # Radio button
                 if i == active_idx:
                     row.label(text="", icon='RADIOBUT_ON')
                 else:
                     op = row.operator("bone_renamer.select_template", text="", icon='RADIOBUT_OFF')
                     op.index = i
-
                 # Nama template
                 row.label(text=t.name)
-
                 # Jumlah bone
                 bone_count = len(scene.bone_renamer_bone_list) if i == active_idx else "?"
                 row.label(text=f"({bone_count})", icon='BONE_DATA')
@@ -969,50 +971,6 @@ class VIEW3D_PT_bone_renamer(Panel):
             col.separator()
             col.operator("bone_renamer.select_bone", text="", icon='RESTRICT_SELECT_OFF')
 
-            # ===== EDIT SELECTED BONE =====
-            idx = scene.bone_renamer_active_bone_index
-            if 0 <= idx < len(bones):
-                bone_item = bones[idx]
-
-                box.separator()
-                edit_box = box.box()
-                edit_box.label(text="Edit Bone Mapping", icon='GREASEPENCIL')
-
-                if bone_item.is_mirror:
-                    edit_box.label(text=f"🔗 Mirror Pair", icon='MOD_MIRROR')
-
-                    # Base name (read-only info)
-                    edit_box.label(text=f"Base: {bone_item.base_name}")
-
-                    # Left side
-                    col = edit_box.column(align=True)
-                    col.label(text="Left Side (+X):")
-                    row = col.row(align=True)
-                    row.prop(bone_item, "old_name_l", text="Old")
-                    row.prop(bone_item, "new_name_l", text="New")
-
-                    # Right side
-                    col = edit_box.column(align=True)
-                    col.label(text="Right Side (-X):")
-                    row = col.row(align=True)
-                    row.prop(bone_item, "old_name_r", text="Old")
-                    row.prop(bone_item, "new_name_r", text="New")
-                else:
-                    edit_box.label(text=f"Single Bone", icon='BONE_DATA')
-                    edit_box.label(text=f"Base: {bone_item.base_name}")
-
-                    row = edit_box.row(align=True)
-                    row.prop(bone_item, "old_name", text="Old")
-                    row.prop(bone_item, "new_name", text="New")
-
-                # Tombol auto-fill new_name
-                row = edit_box.row(align=True)
-                op = row.operator("bone_renamer.auto_fill_new_name", text="Auto-Fill New Name", icon='FILE_REFRESH')
-                op.bone_index = idx
-
-                # Tombol save perubahan
-                row.operator("bone_renamer.save_bone_changes", text="Save Changes", icon='CHECKMARK')
-
             # ===== APPLY RENAME =====
             layout.separator()
             box = layout.box()
@@ -1022,73 +980,6 @@ class VIEW3D_PT_bone_renamer(Panel):
                         icon='OUTLINER_DATA_ARMATURE')
         else:
             layout.label(text="Pilih atau buat template", icon='INFO')
-
-
-class TEMPLATE_OT_select_template(bpy.types.Operator):
-    """Pilih template sebagai aktif"""
-    bl_idname = "bone_renamer.select_template"
-    bl_label = "Select Template"
-    bl_options = {'REGISTER'}
-
-    index: IntProperty()
-
-    def execute(self, context):
-        scene = context.scene
-        scene.bone_renamer_active_template_index = self.index
-        load_active_template_bones(scene)
-        return {'FINISHED'}
-
-
-class TEMPLATE_OT_auto_fill_new_name(bpy.types.Operator):
-    """Auto-fill new_name berdasarkan base_name dan case_type"""
-    bl_idname = "bone_renamer.auto_fill_new_name"
-    bl_label = "Auto-Fill New Name"
-    bl_options = {'REGISTER'}
-
-    bone_index: IntProperty()
-
-    def execute(self, context):
-        scene = context.scene
-        bones = scene.bone_renamer_bone_list
-
-        if self.bone_index < 0 or self.bone_index >= len(bones):
-            return {'CANCELLED'}
-
-        bone_item = bones[self.bone_index]
-
-        if bone_item.is_mirror:
-            suffix_l = format_suffix('L', bone_item.separator, bone_item.case_type)
-            suffix_r = format_suffix('R', bone_item.separator, bone_item.case_type)
-            bone_item.new_name_l = bone_item.base_name + suffix_l
-            bone_item.new_name_r = bone_item.base_name + suffix_r
-        else:
-            # Untuk single bone, gunakan nama lama
-            bone_item.new_name = bone_item.old_name
-
-        # Save
-        template = get_active_template(scene)
-        if template:
-            template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_scene_templates_to_file(scene)
-
-        return {'FINISHED'}
-
-
-class TEMPLATE_OT_save_bone_changes(bpy.types.Operator):
-    """Save perubahan bone ke file"""
-    bl_idname = "bone_renamer.save_bone_changes"
-    bl_label = "Save Changes"
-    bl_options = {'REGISTER'}
-
-    def execute(self, context):
-        scene = context.scene
-        template = get_active_template(scene)
-        if template:
-            template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_scene_templates_to_file(scene)
-        self.report({'INFO'}, "Perubahan disimpan")
-        return {'FINISHED'}
-
 
 # ============================================================
 # REGISTER
@@ -1109,8 +1000,6 @@ classes = (
     TEMPLATE_OT_import,
     TEMPLATE_OT_refresh,
     TEMPLATE_OT_select_template,
-    TEMPLATE_OT_auto_fill_new_name,
-    TEMPLATE_OT_save_bone_changes,
     VIEW3D_PT_bone_renamer,
 )
 
@@ -1133,10 +1022,6 @@ def register():
     bpy.app.timers.register(delayed_load_templates, first_interval=0.1)
 
 def unregister():
-    # Tidak perlu save di sini karena data sudah otomatis di-save ke JSON
-    # setiap kali ada perubahan melalui operator.
-    # Menghapus ini juga mencegah error '_RestrictData' saat addon di-uninstall.
-
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
