@@ -222,6 +222,26 @@ def update_new_name_l(self, context):
         self["_mirror_updating"] = False
 
 
+def get_active_armature(context):
+    """
+    Dapatkan armature aktif berdasarkan mode.
+    Return: (armature_obj, mode_label) atau (None, None)
+    - EDIT/POSE/OBJECT: armature_obj = context.object
+    - WEIGHT_PAINT: armature_obj = mesh.parent (jika armature)
+    """
+    obj = context.object
+    if not obj:
+        return None, None
+    
+    if obj.type == 'ARMATURE':
+        return obj, obj.mode
+    elif obj.type == 'MESH' and obj.mode == 'WEIGHT_PAINT':
+        if obj.parent and obj.parent.type == 'ARMATURE':
+            return obj.parent, 'WEIGHT_PAINT'
+        return None, None
+    return None, None
+
+
 # ============================================================
 # TEMPLATE FILE MANAGEMENT
 # ============================================================
@@ -627,22 +647,17 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
 
 
 class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
-    """Tambahkan bone yang terseleksi ke template aktif"""
+    """Tambahkan bone ke template aktif (Support Edit, Pose, Object, & Weight Paint)"""
     bl_idname = "bone_renamer.add_selected_bones"
-    bl_label = "Add Selected Bones to Template"
+    bl_label = "Add Bones to Template"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        obj = context.object
         scene = context.scene
+        armature_obj, mode_label = get_active_armature(context)
 
-        if not obj or obj.type != 'ARMATURE':
+        if not armature_obj:
             self.report({'ERROR'}, "Silakan pilih objek Armature")
-            return {'CANCELLED'}
-
-        # Izinkan Object Mode selain Edit & Pose
-        if obj.mode not in ('EDIT', 'POSE', 'OBJECT'):
-            self.report({'ERROR'}, "Harus di Edit, Pose, atau Object Mode")
             return {'CANCELLED'}
 
         template = get_active_template(scene)
@@ -650,34 +665,31 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
             self.report({'ERROR'}, "Tidak ada template aktif. Buat template baru dulu.")
             return {'CANCELLED'}
 
-        # Ambil list bone berdasarkan mode aktif
-        if obj.mode == 'EDIT':
-            all_bones = list(obj.data.edit_bones)
+        # Ambil list bone berdasarkan mode
+        if mode_label == 'EDIT':
+            all_bones = list(armature_obj.data.edit_bones)
             selected = [b for b in all_bones if b.select]
-        elif obj.mode == 'POSE':
-            all_bones = list(obj.pose.bones)
+        elif mode_label == 'POSE':
+            all_bones = list(armature_obj.pose.bones)
             selected = [b for b in all_bones if b.select]
-        else:  # OBJECT MODE -> Ambil SEMUA bone di armature
-            all_bones = list(obj.data.bones)
+        else:  # OBJECT atau WEIGHT_PAINT → ambil SEMUA bone
+            all_bones = list(armature_obj.data.bones)
             selected = all_bones
 
         if not selected:
-            if obj.mode == 'OBJECT':
-                self.report({'WARNING'}, "Armature tidak memiliki bone")
-            else:
-                self.report({'WARNING'}, "Tidak ada bone yang terseleksi")
+            self.report({'WARNING'}, "Armature tidak memiliki bone")
             return {'CANCELLED'}
 
         added_count, skipped_count = add_bones_to_active_template(
-            scene, selected, obj, all_bones
+            scene, selected, armature_obj, all_bones
         )
 
         # Laporan hasil
         msg = f"{added_count} bone entry ditambahkan ke template '{template.name}'."
         if skipped_count > 0:
             msg += f" ({skipped_count} bone dilewati karena sudah ada di template atau mirrornya sudah ada)."
+        
         self.report({'INFO'}, msg)
-
         return {'FINISHED'}
 
 class TEMPLATE_OT_remove_bone(bpy.types.Operator):
@@ -797,111 +809,70 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
-    """Rename bone berdasarkan template aktif + update vertex groups"""
-    bl_idname = "bone_renamer.rename_from_template"
-    bl_label = "Apply Rename from Template"
+class TEMPLATE_OT_select_bone(bpy.types.Operator):
+    """Select bone di armature berdasarkan template item yang aktif"""
+    bl_idname = "bone_renamer.select_bone"
+    bl_label = "Select Bone in Armature"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.object
         scene = context.scene
+        armature_obj, mode_label = get_active_armature(context)
 
-        if not obj or obj.type != 'ARMATURE':
-            self.report({'ERROR'}, "Silakan pilih objek Armature")
-            return {'CANCELLED'}
-
-        # Izinkan EDIT, POSE, dan OBJECT mode
-        if obj.mode not in ('EDIT', 'POSE', 'OBJECT'):
-            self.report({'ERROR'}, "Harus di Edit, Pose, atau Object Mode")
-            return {'CANCELLED'}
-
-        template = get_active_template(scene)
-        if not template:
-            self.report({'ERROR'}, "Tidak ada template aktif")
+        if not armature_obj:
+            self.report({'ERROR'}, "Pilih Armature atau Mesh dengan parent Armature")
             return {'CANCELLED'}
 
         bones = scene.bone_renamer_bone_list
-        if len(bones) == 0:
-            self.report({'WARNING'}, "Template kosong")
+        idx = scene.bone_renamer_active_bone_index
+        if idx < 0 or idx >= len(bones):
+            self.report({'WARNING'}, "Tidak ada bone yang terpilih")
             return {'CANCELLED'}
 
-        # Simpan mode awal untuk dikembalikan nanti
-        original_mode = obj.mode
-        renamed_count = 0
-        skipped_count = 0
-        skipped_details = []  # Untuk laporan detail
-
-        # Helper untuk proses rename 1 bone
-        def try_rename(bone_collection, old_name, new_name):
-            nonlocal renamed_count, skipped_count
-            if old_name not in bone_collection:
-                # Bone tidak ada di armature → skip
-                skipped_count += 1
-                skipped_details.append(f"'{old_name}' (tidak ditemukan)")
-                return
-            if old_name == new_name:
-                # Nama sama → skip
-                skipped_count += 1
-                skipped_details.append(f"'{old_name}' (nama sama)")
-                return
-            if new_name in bone_collection:
-                # Nama baru sudah dipakai bone lain → skip
-                skipped_count += 1
-                skipped_details.append(f"'{old_name}' → '{new_name}' (nama baru sudah ada)")
-                return
-            # Rename
-            bone_collection[old_name].name = new_name
-            renamed_count += 1
-
-        if obj.mode == 'EDIT':
-            edit_bones = obj.data.edit_bones
-            for bone_item in bones:
-                if bone_item.is_mirror:
-                    try_rename(edit_bones, bone_item.old_name_l, bone_item.new_name_l)
-                    try_rename(edit_bones, bone_item.old_name_r, bone_item.new_name_r)
-                else:
-                    try_rename(edit_bones, bone_item.old_name, bone_item.new_name)
+        bone_item = bones[idx]
+        target_names = []
+        if bone_item.is_mirror:
+            target_names = [bone_item.old_name_l, bone_item.old_name_r]
         else:
-            # POSE atau OBJECT Mode: gunakan obj.data.bones
-            armature_bones = obj.data.bones
-            for bone_item in bones:
-                if bone_item.is_mirror:
-                    try_rename(armature_bones, bone_item.old_name_l, bone_item.new_name_l)
-                    try_rename(armature_bones, bone_item.old_name_r, bone_item.new_name_r)
-                else:
-                    try_rename(armature_bones, bone_item.old_name, bone_item.new_name)
+            target_names = [bone_item.old_name]
 
-        # Laporan hasil rename
-        msg = f"{renamed_count} bone berhasil di-rename."
-        if skipped_count > 0:
-            msg += f" ({skipped_count} bone dilewati)."
-        self.report({'INFO'}, msg)
-
-        # Update vertex groups (butuh OBJECT mode)
-        if obj.mode != 'OBJECT':
+        # Di Weight Paint, switch ke Pose mode dulu agar bisa select bone
+        if mode_label == 'WEIGHT_PAINT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        vg_count = update_vertex_groups(obj)
-        if vg_count > 0:
-            self.report({'INFO'}, f"{vg_count} vertex group telah diupdate")
-
-        # Kembali ke mode AWAL
-        if original_mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='EDIT')
-        elif original_mode == 'POSE':
+            context.view_layer.objects.active = armature_obj
             bpy.ops.object.mode_set(mode='POSE')
+            bpy.ops.pose.select_all(action='DESELECT')
+            selected_count = 0
+            for name in target_names:
+                if name in armature_obj.pose.bones:
+                    armature_obj.pose.bones[name].bone.select = True
+                    selected_count += 1
+            self.report({'INFO'}, f"{selected_count} bone terseleksi (Pose mode)")
+            return {'FINISHED'}
 
-        template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_scene_templates_to_file(scene)
+        # EDIT / POSE mode standar
+        if mode_label == 'EDIT':
+            bpy.ops.armature.select_all(action='DESELECT')
+        else:
+            bpy.ops.pose.select_all(action='DESELECT')
 
-        # Print detail skipped ke console (untuk debugging)
-        if skipped_details:
-            print(f"[Bone Renamer] Skipped bones pada '{template.name}':")
-            for detail in skipped_details:
-                print(f"  - {detail}")
+        selected_count = 0
+        if mode_label == 'EDIT':
+            for name in target_names:
+                if name in armature_obj.data.edit_bones:
+                    b = armature_obj.data.edit_bones[name]
+                    b.select = True
+                    b.select_head = True
+                    b.select_tail = True
+                    selected_count += 1
+        else:  # POSE
+            for name in target_names:
+                if name in armature_obj.pose.bones:
+                    armature_obj.pose.bones[name].bone.select = True
+                    selected_count += 1
 
+        self.report({'INFO'}, f"{selected_count} bone terseleksi")
         return {'FINISHED'}
-
 
 class TEMPLATE_OT_export(bpy.types.Operator):
     """Export template aktif ke file JSON"""
@@ -1168,19 +1139,23 @@ class VIEW3D_PT_bone_renamer(Panel):
         scene = context.scene
 
         # Info armature
-        if obj and obj.type == 'ARMATURE':
-            layout.label(text=f"Armature: {obj.name}", icon='ARMATURE_DATA')
-            # Tampilkan icon yang sesuai untuk setiap mode
-            mode_icons = {
-                'EDIT': 'EDITMODE_HLT',
-                'POSE': 'POSE_HLT',
-                'OBJECT': 'OBJECT_DATA',
-                'WEIGHT_PAINT': 'WPAINT_HLT',
-            }
-            mode_icon = mode_icons.get(obj.mode, 'OBJECT_DATA')
-            layout.label(text=f"Mode: {obj.mode}", icon=mode_icon)
+        armature_obj, mode_label = get_active_armature(context)
+        if armature_obj:
+            if mode_label == 'WEIGHT_PAINT':
+                layout.label(text=f"Mesh: {context.object.name}", icon='MESH_DATA')
+                layout.label(text=f"Armature: {armature_obj.name}", icon='ARMATURE_DATA')
+                layout.label(text="Mode: WEIGHT_PAINT", icon='WPAINT_HLT')
+            else:
+                layout.label(text=f"Armature: {armature_obj.name}", icon='ARMATURE_DATA')
+                mode_icons = {
+                    'EDIT': 'EDITMODE_HLT',
+                    'POSE': 'POSE_HLT',
+                    'OBJECT': 'OBJECT_DATA',
+                }
+                mode_icon = mode_icons.get(mode_label, 'OBJECT_DATA')
+                layout.label(text=f"Mode: {mode_label}", icon=mode_icon)
         else:
-            layout.label(text="Pilih Armature", icon='ERROR')
+            layout.label(text="Pilih Armature atau Mesh dengan parent Armature", icon='ERROR')
 
         layout.separator()
 
