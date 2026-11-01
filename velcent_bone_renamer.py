@@ -326,10 +326,51 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
 
 class TEMPLATE_ITEM(PropertyGroup):
     """Item untuk menyimpan 1 template"""
-    name: StringProperty(name="Template Name")
+    name: StringProperty(
+        name="Template Name",
+        update=lambda self, context: TEMPLATE_ITEM._on_name_change(self, context)
+    )
     created: StringProperty(name="Created")
     modified: StringProperty(name="Modified")
     bone_count: IntProperty(name="Bone Count", default=0)
+
+    @staticmethod
+    def _on_name_change(self, context):
+        """Dipanggil otomatis saat user edit nama template inline"""
+        scene = context.scene
+        templates = get_all_templates(scene)
+        new_name = self.name.strip()
+
+        # Rollback jika nama kosong
+        if not new_name:
+            print("[Bone Renamer] Nama template tidak boleh kosong")
+            # Kembalikan nama lama dari file JSON
+            data = load_templates_data()
+            old_data = data.get("templates", {}).get(self.name, {})
+            # Cari nama asli dari file
+            for t_name, t_data in data.get("templates", {}).items():
+                if t_data.get("created") == self.created:
+                    self.name = t_name
+                    return
+            return
+
+        # Cek duplikat (abaikan diri sendiri)
+        for t in templates:
+            if t == self:
+                continue
+            if t.name == new_name:
+                print(f"[Bone Renamer] Nama '{new_name}' sudah ada, rollback")
+                # Rollback: ambil nama lama dari JSON
+                data = load_templates_data()
+                for t_name, t_data in data.get("templates", {}).items():
+                    if t_data.get("created") == self.created:
+                        self.name = t_name
+                        return
+                return
+
+        # Nama valid → update modified + simpan ke file
+        self.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_scene_templates_to_file(scene)
 
 
 # ============================================================
@@ -424,29 +465,39 @@ def load_templates_to_scene(scene):
 def save_scene_templates_to_file(scene):
     """Save scene templates ke file"""
     old_data = load_templates_data()
+    old_templates = old_data.get("templates", {})
     data = {"templates": {}, "active_template": ""}
     templates = get_all_templates(scene)
     active_idx = get_active_template_index(scene)
 
+    # Buat mapping created -> old_name untuk melacak rename
+    created_to_old_name = {}
+    for t_name, t_data in old_templates.items():
+        created_to_old_name[t_data.get("created", "")] = t_name
+
     for i, t_item in enumerate(templates):
         t_name = t_item.name
-        
+
+        # Cari nama lama berdasarkan created timestamp (untuk handle rename)
+        old_name = created_to_old_name.get(t_item.created, t_name)
+
         if i == active_idx:
             bones_collection = scene.bone_renamer_bone_list
             bones_data = [bone_item.to_dict() for bone_item in bones_collection]
             t_item.bone_count = len(bones_data)
             data["active_template"] = t_name
         else:
-            old_template_data = old_data.get("templates", {}).get(t_name, {})
+            # Ambil bone data dari nama LAMA (sebelum rename)
+            old_template_data = old_templates.get(old_name, {})
             bones_data = old_template_data.get("bones", [])
             t_item.bone_count = len(bones_data)
-            
+
         data["templates"][t_name] = {
             "created": t_item.created,
             "modified": t_item.modified,
             "bones": bones_data
         }
-        
+
     save_templates_data(data)
 
 
@@ -1245,14 +1296,13 @@ class VIEW3D_PT_bone_renamer(Panel):
         # ===== TEMPLATE LIST =====
         box = layout.box()
         box.label(text="Templates", icon='PRESET')
+
         templates = get_all_templates(scene)
         active_idx = get_active_template_index(scene)
-        
-        # List template dengan radio button + tombol move di kanan
+
         if len(templates) > 0:
-            # Layout 2 kolom: list di kiri, tombol move di kanan
-            main_row = box.row(align=False)
-            
+            main_row = box.row(align=True)
+
             # --- KOLOM KIRI: List Template ---
             col_list = main_row.column(align=True)
             for i, t in enumerate(templates):
@@ -1263,32 +1313,46 @@ class VIEW3D_PT_bone_renamer(Panel):
                 else:
                     op = row.operator("bone_renamer.select_template", text="", icon='RADIOBUT_OFF')
                     op.index = i
-                # Nama template
-                row.label(text=t.name)
-                # Jumlah bone (pakai bone_count dari property, bukan '?')
-                bone_count = getattr(t, 'bone_count', len(scene.bone_renamer_bone_list) if i == active_idx else 0)
-                row.label(text=f"({bone_count})", icon='BONE_DATA')
-            
-            # --- KOLOM KANAN: Tombol Move Up/Down ---
-            col_move = main_row.column(align=True)
-            col_move.separator()  # spacer agar sejajar dengan item list
-            op_up = col_move.operator("bone_renamer.move_template", text="", icon='TRIA_UP')
-            op_up.direction = 'UP'
-            op_down = col_move.operator("bone_renamer.move_template", text="", icon='TRIA_DOWN')
-            op_down.direction = 'DOWN'
+                # Nama template — EDITABLE INLINE (klik untuk rename)
+                row.prop(t, "name", text="")
+                # Jumlah bone
+                row.label(text=f"({t.bone_count})", icon='BONE_DATA')
+
+            # --- KOLOM KANAN: Semua tombol icon sejajar list ---
+            col_btn = main_row.column(align=True)
+
+            # New / Delete
+            col_btn.operator("bone_renamer.new_template", text="", icon='ADD')
+            col_btn.operator("bone_renamer.delete_template", text="", icon='REMOVE')
+            col_btn.separator()
+
+            # Move Up (disable kalau sudah paling atas)
+            sub = col_btn.column(align=True)
+            sub.enabled = active_idx > 0
+            sub.operator("bone_renamer.move_template", text="", icon='TRIA_UP').direction = 'UP'
+
+            # Move Down (disable kalau sudah paling bawah)
+            sub = col_btn.column(align=True)
+            sub.enabled = active_idx < len(templates) - 1
+            sub.operator("bone_renamer.move_template", text="", icon='TRIA_DOWN').direction = 'DOWN'
+
+            col_btn.separator()
+
+            # Export / Import
+            col_btn.operator("bone_renamer.export_template", text="", icon='EXPORT')
+            col_btn.operator("bone_renamer.import_template", text="", icon='IMPORT')
+            col_btn.separator()
+
+            # Refresh
+            col_btn.operator("bone_renamer.refresh", text="", icon='FILE_REFRESH')
+
         else:
-            box.label(text="Belum ada template", icon='INFO')
-
-        # Tombol manajemen template
-        row = box.row(align=True)
-        row.operator("bone_renamer.new_template", text="New", icon='ADD')
-        row.operator("bone_renamer.delete_template", text="Delete", icon='REMOVE')
-        row.operator("bone_renamer.refresh", text="", icon='FILE_REFRESH')
-
-        # Import/Export
-        row = box.row(align=True)
-        row.operator("bone_renamer.export_template", text="Export", icon='EXPORT')
-        row.operator("bone_renamer.import_template", text="Import", icon='IMPORT')
+            # Belum ada template → tetap sediakan New, Import, Refresh
+            row = box.row(align=True)
+            row.label(text="Belum ada template", icon='INFO')
+            row.operator("bone_renamer.new_template", text="", icon='ADD')
+            row.operator("bone_renamer.import_template", text="", icon='IMPORT')
+            row.operator("bone_renamer.refresh", text="", icon='FILE_REFRESH')
 
         layout.separator()
 
