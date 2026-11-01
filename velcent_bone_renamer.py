@@ -760,7 +760,7 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
             for name in target_names:
                 if name in obj.data.bones:
                     # Select bone spesifik di pose mode
-                    obj.data.bones[name].select = True
+                    obj.pose.bones[name].select = True
                     selected_count += 1
 
         self.report({'INFO'}, f"{selected_count} bone terseleksi")
