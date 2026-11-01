@@ -62,6 +62,8 @@ def get_case_type(suffix):
         return 'title'
     if suffix in ('left', 'right'):
         return 'lower_title'
+    elif suffix in ['LEFT', 'RIGHT']:
+        return 'upper_title'
     return 'upper'
 
 
@@ -296,31 +298,28 @@ class TEMPLATE_UL_bone_list(UIList):
     bl_idname = "TEMPLATE_UL_bone_list"
     
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        # ===== KOLOM 1: Icon (Mirror / Single) - 5% lebar =====
-        split = layout.split(factor=0.05)
-        col_icon = split.column()
+        # Layout utama
+        row = layout.row(align=True)
         
+        # 1. Icon Mirror / Single (Kiri)
         if item.is_mirror:
-            col_icon.label(text="", icon='MOD_MIRROR')  # Icon cermin untuk mirror pair
+            row.label(text="", icon='MOD_MIRROR')
         else:
-            col_icon.label(text="", icon='BONE_DATA')   # Icon tulang biasa untuk single bone
-        
-        # ===== KOLOM 2: Konten utama (Old → New) - 95% lebar =====
-        row = split.row(align=True)
-        
+            row.label(text="", icon='BONE_DATA')
+            
+        # 2. Old Name (Dijadikan Label agar kolomnya kecil & rapi, hanya selebar teks)
         if item.is_mirror:
-            # Old name L (compact, tanpa emboss)
-            row.prop(item, "old_name_l", text="", emboss=False)
+            row.label(text=item.old_name_l)
+        else:
+            row.label(text=item.old_name)
             
-            # Arrow (label text otomatis kecil)
-            row.label(text="→")
-            
-            # New name L (luas, bisa diedit)
+        # 3. Tanda Panah (Kecil)
+        row.label(text="", icon='RIGHTARROW')
+        
+        # 4. New Name (Input Field, mengambil seluruh sisa ruang yang ada)
+        if item.is_mirror:
             row.prop(item, "new_name_l", text="")
         else:
-            # Single bone
-            row.prop(item, "old_name", text="", emboss=False)
-            row.label(text="→")
             row.prop(item, "new_name", text="")
 
 # ============================================================
