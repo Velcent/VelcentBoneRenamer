@@ -33,83 +33,93 @@ if not os.path.exists(TEMPLATES_DIR):
 # HELPER FUNCTIONS
 # ============================================================
 
+# ============================================================
+# SIDE DETECTION (L/R) — 1 sumber kebenaran untuk semua fungsi
+# ============================================================
+
+SIDE_TOKEN = "{side}"          # placeholder posisi L/R di dalam base_name
+_TOKEN = r'(?:Left|Right|left|right|L|R|l|r)'
+_SEP = r'[_.\-]'
+
+# urutan penting: yang paling spesifik dulu
+_SIDE_PATTERNS = (
+    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')$'),            # Bone_L / Bone.left
+    re.compile(r'^(?P<side>' + _TOKEN + r')(?P<sep>' + _SEP + r')'),            # L_Bone / left.Bone
+    re.compile(r'(?P<sep>' + _SEP + r')(?P<side>' + _TOKEN + r')(?=' + _SEP + r')'),  # Bone_L_Tip
+    re.compile(r'(?<=[a-z0-9])(?P<side>Left|Right|L|R)$'),                      # upperarmL / upperarmLeft
+    re.compile(r'^(?P<side>Left|Right|L|R)(?=[A-Z][a-z])'),                     # LUpperarm / LeftUpperarm
+    re.compile(r'(?<=[a-z0-9])(?P<side>L|R)(?=[A-Z][a-z])'),                    # upperarmLTip
+)
+
+
 def get_case_type(suffix):
-    """Helper untuk menentukan case type dari suffix/prefix"""
-    if suffix in ['L', 'R']:
+    """Tentukan case type dari token side"""
+    if suffix in ('L', 'R'):
         return 'upper'
-    elif suffix in ['l', 'r']:
+    if suffix in ('l', 'r'):
         return 'lower'
-    elif suffix in ['Left', 'Right']:
+    if suffix in ('Left', 'Right'):
         return 'title'
-    elif suffix in ['left', 'right']:
+    if suffix in ('left', 'right'):
         return 'lower_title'
     return 'upper'
 
+
+def parse_side_name(name):
+    """
+    Parser UTAMA. Return:
+      (base_name, separator, case_type, is_prefix, side)
+    - base_name mengandung placeholder {side} di posisi token aslinya
+    - side = 'L' / 'R' / None (None = tidak ada side valid)
+    """
+    for pattern in _SIDE_PATTERNS:
+        m = pattern.search(name)
+        if not m:
+            continue
+        token = m.group('side')
+        base_name = name[:m.start('side')] + SIDE_TOKEN + name[m.end('side'):]
+        separator = m.groupdict().get('sep') or ''
+        side = 'L' if token in ('L', 'l', 'Left', 'left') else 'R'
+        is_prefix = (m.start('side') == 0)
+        return base_name, separator, get_case_type(token), is_prefix, side
+
+    return name, '', 'upper', False, None
+
+
 def get_base_name_and_suffix(name):
-    """
-    Deteksi suffix ATAU prefix L/R dengan berbagai format.
-    Return: (base_name, separator, case_type, is_prefix)
-    - is_prefix: True jika L/R ada di AWAL nama, False jika di AKHIR/TENGAH
-    """
-    # 1. Cek suffix di AKHIR string (format: Bone_L, Bone.R, Bone-Left)
-    pattern_end = r'([_.-])?(L|R|l|r|Left|left|Right|right)$'
-    match_end = re.search(pattern_end, name)
-    if match_end:
-        base_name = name[:match_end.start()]
-        separator = match_end.group(1) or ''
-        suffix = match_end.group(2)
-        return base_name, separator, get_case_type(suffix), False
+    """Wrapper backward-compatible (4 nilai, tanpa side)"""
+    base, sep, case, is_prefix, _side = parse_side_name(name)
+    return base, sep, case, is_prefix
 
-    # 2. Cek prefix di AWAL string (BARU! format: L_Bone, Left.Bone, R-Bone)
-    pattern_start = r'^(L|R|l|r|Left|left|Right|right)([_.-])?'
-    match_start = re.search(pattern_start, name)
-    if match_start:
-        prefix = match_start.group(1)
-        separator = match_start.group(2) or ''
-        base_name = name[match_start.end():]
-        return base_name, separator, get_case_type(prefix), True
-
-    # 3. Cek suffix di TENGAH string (format: Bone_L_Tip, Bone.R.Tip)
-    pattern_middle = r'([_.\-])(L|R|l|r|Left|left|Right|right)([_.\-])'
-    match_middle = re.search(pattern_middle, name)
-    if match_middle:
-        separator = match_middle.group(1)
-        suffix = match_middle.group(2)
-        before = name[:match_middle.start()]
-        after = name[match_middle.end()-1:]
-        base_name = before + after
-        return base_name, separator, get_case_type(suffix), False
-
-    # 4. Tidak ada suffix/prefix yang terdeteksi
-    return name, '', 'upper', False
 
 def format_side(side, base_name, separator, case_type, is_prefix=False):
     """
-    1 helper untuk format nama dengan side L/R sebagai prefix ATAU suffix.
-    - side: 'L' atau 'R'
-    - is_prefix: True = side di awal (L_Bone), False = side di akhir (Bone_L)
+    1 helper untuk semua format. Kalau base_name punya {side},
+    posisi token otomatis ikut (depan / tengah / belakang).
     """
-    # Format label side berdasarkan case_type
-    if case_type == 'upper':
-        side_label = side  # 'L' atau 'R'
-    elif case_type == 'lower':
-        side_label = side.lower()  # 'l' atau 'r'
+    if case_type == 'lower':
+        label = side.lower()
     elif case_type == 'title':
-        side_label = 'Left' if side == 'L' else 'Right'
+        label = 'Left' if side == 'L' else 'Right'
     elif case_type == 'lower_title':
-        side_label = 'left' if side == 'L' else 'right'
+        label = 'left' if side == 'L' else 'right'
     else:
-        side_label = side
+        label = side
 
+    if SIDE_TOKEN in base_name:
+        return base_name.replace(SIDE_TOKEN, label)
+
+    # fallback untuk template JSON lama (base_name tanpa placeholder)
     if is_prefix:
-        return f"{side_label}{separator}{base_name}"
-    else:
-        return f"{base_name}{separator}{side_label}"
+        return f"{label}{separator}{base_name}"
+    return f"{base_name}{separator}{label}"
+
 
 def format_suffix(side, separator, case_type):
-    """Wrapper untuk backward compatibility - hanya format suffix"""
+    """Wrapper lama, biar kode lain tidak error"""
     return format_side(side, '', separator, case_type, is_prefix=False)
     
+
 def find_mirror_bone(bone, all_bones):
     """Cari bone pasangan mirror"""
     target_head = mathutils.Vector((-bone.head.x, bone.head.y, bone.head.z))
@@ -157,66 +167,37 @@ def update_vertex_groups(armature):
 
 def update_new_name_l(self, context):
     """
-    Auto-update new_name_r saat new_name_l diedit (STRICT VALIDATION).
-    Aturan:
-    1. Harus memiliki suffix L/l/Left/left.
-    2. Jika suffix R/r/Right/right -> TIDAK VALID (dibatalkan/rollback).
-    3. Jika tidak ada suffix -> TIDAK VALID (dibatalkan/rollback).
-    4. Tidak ada auto-add suffix.
+    Auto-mirror new_name_r dari new_name_l.
+    Wajib side L. Kalau tidak ada side / side-nya R → rollback.
     """
+    if self.get("_mirror_updating", False):
+        return
+
     name = self.new_name_l
-    
-    # Regex untuk mendeteksi suffix di akhir atau tengah
-    pattern_end = r'([_.-])?(L|R|l|r|Left|left|Right|right)$'
-    pattern_middle = r'([_.\-])(L|R|l|r|Left|left|Right|right)([_.\-])'
-    
-    match_end = re.search(pattern_end, name)
-    match_middle = re.search(pattern_middle, name)
-    
-    is_valid = False
-    detected_suffix = None
-    base_name = ""
-    separator = ""
-    case_type = "upper"
-    
-    # 1. Deteksi posisi dan jenis suffix
-    if match_end:
-        detected_suffix = match_end.group(2)
-        base_name = name[:match_end.start()]
-        separator = match_end.group(1) or ''
-        case_type = get_case_type(detected_suffix)
-        is_valid = True
-    elif match_middle:
-        detected_suffix = match_middle.group(2)
-        separator = match_middle.group(1)
-        before = name[:match_middle.start()]
-        after = name[match_middle.end()-1:]
-        base_name = before + after
-        case_type = get_case_type(detected_suffix)
-        is_valid = True
-        
-    l_suffixes = ['L', 'l', 'Left', 'left']
-    
-    # 2. Validasi: Harus suffix L, bukan R, dan harus ada suffix
-    if is_valid and detected_suffix in l_suffixes:
-        # === KASUS VALID ===
-        # Simpan state valid terakhir untuk keperluan rollback
-        self["last_valid_new_name_l"] = name
-        
-        # Generate new_name_r secara otomatis
-        self.new_name_r = base_name + format_suffix('R', separator, case_type)
-    else:
-        # === KASUS TIDAK VALID ===
-        # - Tidak ada suffix sama sekali
-        # - Suffix yang terdeteksi adalah R (Right)
-        print(f"[Bone Renamer] Invalid: '{name}' tidak valid untuk sisi Kiri. Harus berakhiran L/l/Left/left. Perubahan dibatalkan.")
-        
-        # Rollback ke nilai valid terakhir
-        if "last_valid_new_name_l" in self:
-            self.new_name_l = self["last_valid_new_name_l"]
+    base, sep, case, is_prefix, side = parse_side_name(name)
+
+    self["_mirror_updating"] = True
+    try:
+        if side == 'L':
+            l_name = format_side('L', base, sep, case, is_prefix)
+            r_name = format_side('R', base, sep, case, is_prefix)
+
+            self["last_valid_new_name_l"] = l_name
+            if self.new_name_l != l_name:
+                self.new_name_l = l_name
+            if self.new_name_r != r_name:
+                self.new_name_r = r_name
         else:
-            # Fallback jika ini pertama kali dan belum ada state valid (kembalikan ke nama asli)
-            self.new_name_l = self.old_name_l
+            reason = ("memakai side R (kanan), field ini untuk side L"
+                      if side == 'R' else
+                      "tidak punya token L/l/Left/left yang valid")
+            print(f"[Bone Renamer] DITOLAK: '{name}' {reason}. Perubahan dibatalkan.")
+
+            fallback = self.get("last_valid_new_name_l", self.old_name_l)
+            if self.new_name_l != fallback:
+                self.new_name_l = fallback
+    finally:
+        self["_mirror_updating"] = False
 
 # ============================================================
 # TEMPLATE FILE MANAGEMENT
