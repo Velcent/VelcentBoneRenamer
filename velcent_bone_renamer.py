@@ -627,7 +627,7 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
 
 
 class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
-    """Tambahkan bone yang terseleksi ke template aktif (auto mirror detection by NAME)"""
+    """Tambahkan bone yang terseleksi ke template aktif"""
     bl_idname = "bone_renamer.add_selected_bones"
     bl_label = "Add Selected Bones to Template"
     bl_options = {'REGISTER'}
@@ -640,8 +640,9 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
             self.report({'ERROR'}, "Silakan pilih objek Armature")
             return {'CANCELLED'}
 
-        if obj.mode not in ('EDIT', 'POSE'):
-            self.report({'ERROR'}, "Harus di Edit Mode atau Pose Mode")
+        # Izinkan Object Mode selain Edit & Pose
+        if obj.mode not in ('EDIT', 'POSE', 'OBJECT'):
+            self.report({'ERROR'}, "Harus di Edit, Pose, atau Object Mode")
             return {'CANCELLED'}
 
         template = get_active_template(scene)
@@ -649,15 +650,22 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
             self.report({'ERROR'}, "Tidak ada template aktif. Buat template baru dulu.")
             return {'CANCELLED'}
 
+        # Ambil list bone berdasarkan mode aktif
         if obj.mode == 'EDIT':
             all_bones = list(obj.data.edit_bones)
             selected = [b for b in all_bones if b.select]
-        else:  # POSE
+        elif obj.mode == 'POSE':
             all_bones = list(obj.pose.bones)
             selected = [b for b in all_bones if b.select]
+        else:  # OBJECT MODE -> Ambil SEMUA bone di armature
+            all_bones = list(obj.data.bones)
+            selected = all_bones
 
         if not selected:
-            self.report({'WARNING'}, "Tidak ada bone yang terseleksi")
+            if obj.mode == 'OBJECT':
+                self.report({'WARNING'}, "Armature tidak memiliki bone")
+            else:
+                self.report({'WARNING'}, "Tidak ada bone yang terseleksi")
             return {'CANCELLED'}
 
         added_count, skipped_count = add_bones_to_active_template(
@@ -671,7 +679,6 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
         self.report({'INFO'}, msg)
 
         return {'FINISHED'}
-
 
 class TEMPLATE_OT_remove_bone(bpy.types.Operator):
     """Hapus bone yang terpilih dari template"""
@@ -1049,7 +1056,7 @@ class TEMPLATE_OT_select_template(bpy.types.Operator):
 # OPERATORS - SORT & MOVE BONES
 # ============================================================
 class TEMPLATE_OT_sort_bones(bpy.types.Operator):
-    """Urutkan bone di template aktif (Ascending/Descending)"""
+    """Urutkan bones (Ascending/Descending)"""
     bl_idname = "bone_renamer.sort_bones"
     bl_label = "Sort Bones"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1109,7 +1116,7 @@ class TEMPLATE_OT_sort_bones(bpy.types.Operator):
         return {'FINISHED'}
 
 class TEMPLATE_OT_move_bone(bpy.types.Operator):
-    """Pindah bone ke atas/bawah di list"""
+    """Pindah bone ke atas/bawah"""
     bl_idname = "bone_renamer.move_bone"
     bl_label = "Move Bone"
     bl_options = {'REGISTER', 'UNDO'}
