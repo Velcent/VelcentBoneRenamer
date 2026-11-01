@@ -34,7 +34,7 @@ if not os.path.exists(TEMPLATES_DIR):
 # ============================================================
 
 def get_case_type(suffix):
-    """Helper untuk menentukan case type dari suffix"""
+    """Helper untuk menentukan case type dari suffix/prefix"""
     if suffix in ['L', 'R']:
         return 'upper'
     elif suffix in ['l', 'r']:
@@ -46,46 +46,70 @@ def get_case_type(suffix):
     return 'upper'
 
 def get_base_name_and_suffix(name):
-    """Deteksi suffix L/R dengan berbagai format"""
-    # 1. Cek suffix di AKHIR string (format standar: Bone_L, Bone.R, Bone-Left)
-    pattern_end = r'([_.\-])?(L|R|l|r|Left|left|Right|right)$'
+    """
+    Deteksi suffix ATAU prefix L/R dengan berbagai format.
+    Return: (base_name, separator, case_type, is_prefix)
+    - is_prefix: True jika L/R ada di AWAL nama, False jika di AKHIR/TENGAH
+    """
+    # 1. Cek suffix di AKHIR string (format: Bone_L, Bone.R, Bone-Left)
+    pattern_end = r'([_.-])?(L|R|l|r|Left|left|Right|right)$'
     match_end = re.search(pattern_end, name)
     if match_end:
         base_name = name[:match_end.start()]
         separator = match_end.group(1) or ''
         suffix = match_end.group(2)
-        case_type = get_case_type(suffix)
-        return base_name, separator, case_type
+        return base_name, separator, get_case_type(suffix), False
 
-    # 2. Cek suffix di TENGAH string (format khusus: Bone_L_Tip, Bone.R.Tip)
+    # 2. Cek prefix di AWAL string (BARU! format: L_Bone, Left.Bone, R-Bone)
+    pattern_start = r'^(L|R|l|r|Left|left|Right|right)([_.-])?'
+    match_start = re.search(pattern_start, name)
+    if match_start:
+        prefix = match_start.group(1)
+        separator = match_start.group(2) or ''
+        base_name = name[match_start.end():]
+        return base_name, separator, get_case_type(prefix), True
+
+    # 3. Cek suffix di TENGAH string (format: Bone_L_Tip, Bone.R.Tip)
     pattern_middle = r'([_.\-])(L|R|l|r|Left|left|Right|right)([_.\-])'
     match_middle = re.search(pattern_middle, name)
     if match_middle:
         separator = match_middle.group(1)
         suffix = match_middle.group(2)
-        # Ambil bagian sebelum dan sesudah L/R
         before = name[:match_middle.start()]
-        after = name[match_middle.end()-1:]  # -1 untuk menyertakan separator kedua
+        after = name[match_middle.end()-1:]
         base_name = before + after
-        case_type = get_case_type(suffix)
-        return base_name, separator, case_type
+        return base_name, separator, get_case_type(suffix), False
 
-    # 3. Tidak ada suffix yang terdeteksi
-    return name, '', 'upper'
+    # 4. Tidak ada suffix/prefix yang terdeteksi
+    return name, '', 'upper', False
+
+def format_side(side, base_name, separator, case_type, is_prefix=False):
+    """
+    1 helper untuk format nama dengan side L/R sebagai prefix ATAU suffix.
+    - side: 'L' atau 'R'
+    - is_prefix: True = side di awal (L_Bone), False = side di akhir (Bone_L)
+    """
+    # Format label side berdasarkan case_type
+    if case_type == 'upper':
+        side_label = side  # 'L' atau 'R'
+    elif case_type == 'lower':
+        side_label = side.lower()  # 'l' atau 'r'
+    elif case_type == 'title':
+        side_label = 'Left' if side == 'L' else 'Right'
+    elif case_type == 'lower_title':
+        side_label = 'left' if side == 'L' else 'right'
+    else:
+        side_label = side
+
+    if is_prefix:
+        return f"{side_label}{separator}{base_name}"
+    else:
+        return f"{base_name}{separator}{side_label}"
 
 def format_suffix(side, separator, case_type):
-    """Format suffix berdasarkan case type"""
-    if case_type == 'upper':
-        return separator + side
-    elif case_type == 'lower':
-        return separator + side.lower()
-    elif case_type == 'title':
-        return separator + ('Left' if side == 'L' else 'Right')
-    elif case_type == 'lower_title':
-        return separator + ('left' if side == 'L' else 'right')
-    else:
-        return separator + side
-
+    """Wrapper untuk backward compatibility - hanya format suffix"""
+    return format_side(side, '', separator, case_type, is_prefix=False)
+    
 def find_mirror_bone(bone, all_bones):
     """Cari bone pasangan mirror"""
     target_head = mathutils.Vector((-bone.head.x, bone.head.y, bone.head.z))
@@ -117,9 +141,9 @@ def update_vertex_groups(armature):
         vg_to_rename = []
         for vg in mesh_obj.vertex_groups:
             if vg.name not in bone_names:
-                base_vg, sep_vg, case_vg = get_base_name_and_suffix(vg.name)
+                base_vg, sep_vg, case_vg, _ = get_base_name_and_suffix(vg.name)  # ← tambah _
                 for bone_name in bone_names:
-                    base_bone, sep_bone, case_bone = get_base_name_and_suffix(bone_name)
+                    base_bone, sep_bone, case_bone, _ = get_base_name_and_suffix(bone_name)  # ← tambah _
                     if base_vg == base_bone:
                         vg_to_rename.append((vg.name, bone_name))
                         break
@@ -228,6 +252,7 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
     separator: StringProperty(name="Separator")
     case_type: StringProperty(name="Case Type")
     is_mirror: BoolProperty(name="Is Mirror", default=False)
+    is_prefix: BoolProperty(name="Is Prefix", default=False)
 
     # Untuk single bone (non-mirror)
     old_name: StringProperty(name="Old Name")
@@ -246,6 +271,7 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
             'separator': self.separator,
             'case_type': self.case_type,
             'is_mirror': self.is_mirror,
+            'is_prefix': self.is_prefix,  # ← simpan ke JSON
         }
         if self.is_mirror:
             data['old_name_l'] = self.old_name_l
@@ -263,6 +289,7 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
         self.separator = data.get('separator', '')
         self.case_type = data.get('case_type', 'upper')
         self.is_mirror = data.get('is_mirror', False)
+        self.is_prefix = data.get('is_prefix', False)  # ← load dari JSON
 
         if self.is_mirror:
             self.old_name_l = data.get('old_name_l', '')
@@ -450,7 +477,7 @@ def add_bones_to_active_template(scene, bones_to_add, armature_obj):
             continue
 
         # Parse nama bone
-        base_name, separator, case_type = get_base_name_and_suffix(bone.name)
+        base_name, separator, case_type, is_prefix = get_base_name_and_suffix(bone.name)
 
         if mirror_bone:
             # Mirror pair ditemukan dan belum ada di template
@@ -469,6 +496,7 @@ def add_bones_to_active_template(scene, bones_to_add, armature_obj):
             bone_item.separator = separator
             bone_item.case_type = case_type
             bone_item.is_mirror = True
+            bone_item.is_prefix = is_prefix
             bone_item.old_name_l = l_bone.name
             bone_item.old_name_r = r_bone.name
             bone_item.new_name_l = l_bone.name
