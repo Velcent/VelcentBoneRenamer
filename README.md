@@ -1,3 +1,3 @@
 # Velcent Bone Renamer
-Blender Plugin
-Rename bones and vertex groups with mirror
+## Blender plugin to rename bones and vertex groups with auto mirror
+![Teks Alternatif (Alt Text)](Preview.png)

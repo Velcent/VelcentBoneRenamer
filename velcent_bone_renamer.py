@@ -705,7 +705,7 @@ class TEMPLATE_OT_clear_bones(bpy.types.Operator):
         return {'FINISHED'}
 
 class TEMPLATE_OT_select_bone(bpy.types.Operator):
-    """Select bone di armature berdasarkan template item yang aktif"""
+    """Select bone di armature berdasarkan template item yang aktif (bisa di Edit/Pose Mode)"""
     bl_idname = "bone_renamer.select_bone"
     bl_label = "Select Bone in Armature"
     bl_options = {'REGISTER', 'UNDO'}
@@ -718,8 +718,8 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
             self.report({'ERROR'}, "Silakan pilih objek Armature")
             return {'CANCELLED'}
 
-        if obj.mode != 'EDIT':
-            self.report({'ERROR'}, "Harus di Edit Mode")
+        if obj.mode not in ('EDIT', 'POSE'):
+            self.report({'ERROR'}, "Harus di Edit Mode atau Pose Mode")
             return {'CANCELLED'}
 
         bones = scene.bone_renamer_bone_list
@@ -731,27 +731,37 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
 
         bone_item = bones[idx]
 
-        # PERBAIKAN: Deselect semua bone secara langsung (lebih aman & cepat)
-        for b in obj.data.edit_bones:
-            b.select = False
-            b.select_head = False
-            b.select_tail = False
-
-        # Select bone yang sesuai
-        selected_count = 0
+        # Kumpulkan nama bone yang akan di-select (tunggal atau mirror pair)
+        target_names = []
         if bone_item.is_mirror:
-            for name in [bone_item.old_name_l, bone_item.old_name_r]:
-                if name in obj.data.edit_bones:
-                    obj.data.edit_bones[name].select = True
-                    obj.data.edit_bones[name].select_head = True
-                    obj.data.edit_bones[name].select_tail = True
-                    selected_count += 1
+            target_names = [bone_item.old_name_l, bone_item.old_name_r]
         else:
-            if bone_item.old_name in obj.data.edit_bones:
-                obj.data.edit_bones[bone_item.old_name].select = True
-                obj.data.edit_bones[bone_item.old_name].select_head = True
-                obj.data.edit_bones[bone_item.old_name].select_tail = True
-                selected_count += 1
+            target_names = [bone_item.old_name]
+
+        # ===== PERBAIKAN: DESELECT SEMUA BONE MENGGUNAKAN OPERATOR =====
+        # Ini 100% aman dan menghindari error 'Bone object has no attribute select'
+        if obj.mode == 'EDIT':
+            bpy.ops.armature.select_all(action='DESELECT')
+        else:  # POSE MODE
+            bpy.ops.pose.select_all(action='DESELECT')
+
+        # ===== SELECT BONE TARGET =====
+        selected_count = 0
+        
+        if obj.mode == 'EDIT':
+            for name in target_names:
+                if name in obj.data.edit_bones:
+                    b = obj.data.edit_bones[name]
+                    b.select = True
+                    b.select_head = True
+                    b.select_tail = True
+                    selected_count += 1
+        else:  # POSE MODE
+            for name in target_names:
+                if name in obj.data.bones:
+                    # Select bone spesifik di pose mode
+                    obj.data.bones[name].select = True
+                    selected_count += 1
 
         self.report({'INFO'}, f"{selected_count} bone terseleksi")
         return {'FINISHED'}
