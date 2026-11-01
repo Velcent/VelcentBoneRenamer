@@ -672,25 +672,28 @@ class TEMPLATE_OT_add_selected_bones(bpy.types.Operator):
         elif mode_label == 'POSE':
             all_bones = list(armature_obj.pose.bones)
             selected = [b for b in all_bones if b.select]
-        else:  # OBJECT atau WEIGHT_PAINT → ambil SEMUA bone
+        elif mode_label == 'WEIGHT_PAINT':
+            all_bones = list(armature_obj.pose.bones)
+            selected = [b for b in all_bones if b.select]
+        else:  # OBJECT MODE → ambil SEMUA bone
             all_bones = list(armature_obj.data.bones)
             selected = all_bones
 
         if not selected:
-            self.report({'WARNING'}, "Armature tidak memiliki bone")
+            self.report({'WARNING'}, "Tidak ada bone yang terseleksi")
             return {'CANCELLED'}
 
         added_count, skipped_count = add_bones_to_active_template(
             scene, selected, armature_obj, all_bones
         )
 
-        # Laporan hasil
         msg = f"{added_count} bone entry ditambahkan ke template '{template.name}'."
         if skipped_count > 0:
             msg += f" ({skipped_count} bone dilewati karena sudah ada di template atau mirrornya sudah ada)."
         
         self.report({'INFO'}, msg)
         return {'FINISHED'}
+
 
 class TEMPLATE_OT_remove_bone(bpy.types.Operator):
     """Hapus bone yang terpilih dari template"""
@@ -749,70 +752,9 @@ class TEMPLATE_OT_clear_bones(bpy.types.Operator):
 
 
 class TEMPLATE_OT_select_bone(bpy.types.Operator):
-    """Select bone di armature berdasarkan template item yang aktif"""
+    """Select bone dari list"""
     bl_idname = "bone_renamer.select_bone"
-    bl_label = "Select Bone in Armature"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        obj = context.object
-        scene = context.scene
-
-        if not obj or obj.type != 'ARMATURE':
-            self.report({'ERROR'}, "Silakan pilih objek Armature")
-            return {'CANCELLED'}
-
-        if obj.mode not in ('EDIT', 'POSE'):
-            self.report({'ERROR'}, "Harus di Edit Mode atau Pose Mode")
-            return {'CANCELLED'}
-
-        bones = scene.bone_renamer_bone_list
-        idx = scene.bone_renamer_active_bone_index
-
-        if idx < 0 or idx >= len(bones):
-            self.report({'WARNING'}, "Tidak ada bone yang terpilih")
-            return {'CANCELLED'}
-
-        bone_item = bones[idx]
-
-        # Kumpulkan nama bone yang akan di-select
-        target_names = []
-        if bone_item.is_mirror:
-            target_names = [bone_item.old_name_l, bone_item.old_name_r]
-        else:
-            target_names = [bone_item.old_name]
-
-        # Deselect semua bone
-        if obj.mode == 'EDIT':
-            bpy.ops.armature.select_all(action='DESELECT')
-        else:
-            bpy.ops.pose.select_all(action='DESELECT')
-
-        # Select bone target
-        selected_count = 0
-        if obj.mode == 'EDIT':
-            for name in target_names:
-                if name in obj.data.edit_bones:
-                    b = obj.data.edit_bones[name]
-                    b.select = True
-                    b.select_head = True
-                    b.select_tail = True
-                    selected_count += 1
-        else:  # POSE
-            for name in target_names:
-                if name in obj.pose.bones:
-                    # Select bone spesifik di pose mode
-                    obj.pose.bones[name].select = True
-                    selected_count += 1
-
-        self.report({'INFO'}, f"{selected_count} bone terseleksi")
-        return {'FINISHED'}
-
-
-class TEMPLATE_OT_select_bone(bpy.types.Operator):
-    """Select bone di armature berdasarkan template item yang aktif"""
-    bl_idname = "bone_renamer.select_bone"
-    bl_label = "Select Bone in Armature"
+    bl_label = "Select Bone"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -822,6 +764,10 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
         if not armature_obj:
             self.report({'ERROR'}, "Pilih Armature atau Mesh dengan parent Armature")
             return {'CANCELLED'}
+        
+        if mode_label not in ('EDIT', 'POSE', 'WEIGHT_PAINT'):
+            self.report({'ERROR'}, "Tidak bisa seleksi bone di mode ini")
+            return {'CANCELLED'}
 
         bones = scene.bone_renamer_bone_list
         idx = scene.bone_renamer_active_bone_index
@@ -836,21 +782,6 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
         else:
             target_names = [bone_item.old_name]
 
-        # Di Weight Paint, switch ke Pose mode dulu agar bisa select bone
-        if mode_label == 'WEIGHT_PAINT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-            context.view_layer.objects.active = armature_obj
-            bpy.ops.object.mode_set(mode='POSE')
-            bpy.ops.pose.select_all(action='DESELECT')
-            selected_count = 0
-            for name in target_names:
-                if name in armature_obj.pose.bones:
-                    armature_obj.pose.bones[name].bone.select = True
-                    selected_count += 1
-            self.report({'INFO'}, f"{selected_count} bone terseleksi (Pose mode)")
-            return {'FINISHED'}
-
-        # EDIT / POSE mode standar
         if mode_label == 'EDIT':
             bpy.ops.armature.select_all(action='DESELECT')
         else:
@@ -865,10 +796,10 @@ class TEMPLATE_OT_select_bone(bpy.types.Operator):
                     b.select_head = True
                     b.select_tail = True
                     selected_count += 1
-        else:  # POSE
+        else:
             for name in target_names:
                 if name in armature_obj.pose.bones:
-                    armature_obj.pose.bones[name].bone.select = True
+                    armature_obj.pose.bones[name].select = True
                     selected_count += 1
 
         self.report({'INFO'}, f"{selected_count} bone terseleksi")
