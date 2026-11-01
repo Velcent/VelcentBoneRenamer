@@ -1074,6 +1074,37 @@ class TEMPLATE_OT_select_template(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class TEMPLATE_OT_move_template(bpy.types.Operator):
+    """Pindah template aktif ke atas/bawah"""
+    bl_idname = "bone_renamer.move_template"
+    bl_label = "Move Template"
+    bl_options = {'REGISTER'}
+    direction: EnumProperty(
+        items=[
+            ('UP', "Up", "Move up"),
+            ('DOWN', "Down", "Move down")
+        ]
+    )
+    def execute(self, context):
+        scene = context.scene
+        templates = get_all_templates(scene)
+        idx = get_active_template_index(scene)
+        if idx < 0 or idx >= len(templates):
+            self.report({'WARNING'}, "Tidak ada template aktif")
+            return {'CANCELLED'}
+        if self.direction == 'UP' and idx > 0:
+            templates.move(idx, idx - 1)
+            scene.bone_renamer_active_template_index = idx - 1
+        elif self.direction == 'DOWN' and idx < len(templates) - 1:
+            templates.move(idx, idx + 1)
+            scene.bone_renamer_active_template_index = idx + 1
+        else:
+            return {'CANCELLED'}
+        # Simpan urutan baru ke file JSON
+        save_scene_templates_to_file(scene)
+        return {'FINISHED'}
+
+
 # ============================================================
 # OPERATORS - SORT & MOVE BONES
 # ============================================================
@@ -1214,15 +1245,18 @@ class VIEW3D_PT_bone_renamer(Panel):
         # ===== TEMPLATE LIST =====
         box = layout.box()
         box.label(text="Templates", icon='PRESET')
-
         templates = get_all_templates(scene)
         active_idx = get_active_template_index(scene)
-
-        # List template dengan radio button
+        
+        # List template dengan radio button + tombol move di kanan
         if len(templates) > 0:
-            col = box.column(align=True)
+            # Layout 2 kolom: list di kiri, tombol move di kanan
+            main_row = box.row(align=False)
+            
+            # --- KOLOM KIRI: List Template ---
+            col_list = main_row.column(align=True)
             for i, t in enumerate(templates):
-                row = col.row(align=True)
+                row = col_list.row(align=True)
                 # Radio button
                 if i == active_idx:
                     row.label(text="", icon='RADIOBUT_ON')
@@ -1231,9 +1265,17 @@ class VIEW3D_PT_bone_renamer(Panel):
                     op.index = i
                 # Nama template
                 row.label(text=t.name)
-                # Jumlah bone
-                bone_count = t.bone_count
+                # Jumlah bone (pakai bone_count dari property, bukan '?')
+                bone_count = getattr(t, 'bone_count', len(scene.bone_renamer_bone_list) if i == active_idx else 0)
                 row.label(text=f"({bone_count})", icon='BONE_DATA')
+            
+            # --- KOLOM KANAN: Tombol Move Up/Down ---
+            col_move = main_row.column(align=True)
+            col_move.separator()  # spacer agar sejajar dengan item list
+            op_up = col_move.operator("bone_renamer.move_template", text="", icon='TRIA_UP')
+            op_up.direction = 'UP'
+            op_down = col_move.operator("bone_renamer.move_template", text="", icon='TRIA_DOWN')
+            op_down.direction = 'DOWN'
         else:
             box.label(text="Belum ada template", icon='INFO')
 
@@ -1317,6 +1359,7 @@ classes = (
     TEMPLATE_OT_import,
     TEMPLATE_OT_refresh,
     TEMPLATE_OT_select_template,
+    TEMPLATE_OT_move_template,
     TEMPLATE_OT_sort_bones,
     TEMPLATE_OT_move_bone,
     VIEW3D_PT_bone_renamer,
