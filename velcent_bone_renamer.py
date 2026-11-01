@@ -132,11 +132,67 @@ def update_vertex_groups(armature):
     return updated_count
 
 def update_new_name_l(self, context):
-    """Auto-update new_name_r saat new_name_l diedit"""
-    base, sep, case = get_base_name_and_suffix(self.new_name_l)
-    # Cek apakah new_name_l memiliki suffix L/R
-    if re.search(r'(L|R|l|r|Left|left|Right|right)$', self.new_name_l):
-        self.new_name_r = base + format_suffix('R', sep, case)
+    """
+    Auto-update new_name_r saat new_name_l diedit (STRICT VALIDATION).
+    Aturan:
+    1. Harus memiliki suffix L/l/Left/left.
+    2. Jika suffix R/r/Right/right -> TIDAK VALID (dibatalkan/rollback).
+    3. Jika tidak ada suffix -> TIDAK VALID (dibatalkan/rollback).
+    4. Tidak ada auto-add suffix.
+    """
+    name = self.new_name_l
+    
+    # Regex untuk mendeteksi suffix di akhir atau tengah
+    pattern_end = r'([_.-])?(L|R|l|r|Left|left|Right|right)$'
+    pattern_middle = r'([_.\-])(L|R|l|r|Left|left|Right|right)([_.\-])'
+    
+    match_end = re.search(pattern_end, name)
+    match_middle = re.search(pattern_middle, name)
+    
+    is_valid = False
+    detected_suffix = None
+    base_name = ""
+    separator = ""
+    case_type = "upper"
+    
+    # 1. Deteksi posisi dan jenis suffix
+    if match_end:
+        detected_suffix = match_end.group(2)
+        base_name = name[:match_end.start()]
+        separator = match_end.group(1) or ''
+        case_type = get_case_type(detected_suffix)
+        is_valid = True
+    elif match_middle:
+        detected_suffix = match_middle.group(2)
+        separator = match_middle.group(1)
+        before = name[:match_middle.start()]
+        after = name[match_middle.end()-1:]
+        base_name = before + after
+        case_type = get_case_type(detected_suffix)
+        is_valid = True
+        
+    l_suffixes = ['L', 'l', 'Left', 'left']
+    
+    # 2. Validasi: Harus suffix L, bukan R, dan harus ada suffix
+    if is_valid and detected_suffix in l_suffixes:
+        # === KASUS VALID ===
+        # Simpan state valid terakhir untuk keperluan rollback
+        self["last_valid_new_name_l"] = name
+        
+        # Generate new_name_r secara otomatis
+        self.new_name_r = base_name + format_suffix('R', separator, case_type)
+    else:
+        # === KASUS TIDAK VALID ===
+        # - Tidak ada suffix sama sekali
+        # - Suffix yang terdeteksi adalah R (Right)
+        print(f"[Bone Renamer] Invalid: '{name}' tidak valid untuk sisi Kiri. Harus berakhiran L/l/Left/left. Perubahan dibatalkan.")
+        
+        # Rollback ke nilai valid terakhir
+        if "last_valid_new_name_l" in self:
+            self.new_name_l = self["last_valid_new_name_l"]
+        else:
+            # Fallback jika ini pertama kali dan belum ada state valid (kembalikan ke nama asli)
+            self.new_name_l = self.old_name_l
 
 # ============================================================
 # TEMPLATE FILE MANAGEMENT
