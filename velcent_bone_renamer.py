@@ -1225,21 +1225,30 @@ class VIEW3D_PT_bone_renamer(Panel):
         box = layout.box()
         box.label(text="Templates", icon='PRESET')
 
+        template = get_active_template(scene)
+
         # Row tombol actions
         row = box.row(align=True)
         row.operator("bone_renamer.new_template", text="", icon='ADD')
-        row.operator("bone_renamer.rename_template", text="", icon='GREASEPENCIL')
-        row.operator("bone_renamer.delete_template", text="", icon='TRASH')
+        if template:
+            row.operator("bone_renamer.rename_template", text="", icon='GREASEPENCIL')
+            row.operator("bone_renamer.delete_template", text="", icon='TRASH')
         row.separator()
-        row.operator("bone_renamer.export_template", text="", icon='EXPORT')
+        if template:
+            row.operator("bone_renamer.export_template", text="", icon='EXPORT')
         row.operator("bone_renamer.import_template", text="", icon='IMPORT')
         row.separator()
         row.operator("bone_renamer.refresh", text="", icon='FILE_REFRESH')
+        if template:
+            row.separator()
+            row.label(text=f"({template.bone_count})", icon='BONE_DATA')
 
         # Dropdown template
-        box.prop(scene, "bone_renamer_template_enum", text="")
-
-        template = get_active_template(scene)
+        if template:
+            box.prop(scene, "bone_renamer_template_enum", text="")
+        else:
+            row.separator()
+            row.prop(scene, "bone_renamer_template_enum", text="")
 
         # ===== BONE LIST =====
         if template:
@@ -1279,9 +1288,11 @@ class VIEW3D_PT_bone_renamer(Panel):
             # ===== APPLY RENAME =====
             layout.separator()
             box = layout.box()
-            box.label(text="Apply Rename", icon='CHECKMARK')
+            box.label(text="Rename Bones + Vertex Groups", icon='CHECKMARK')
+            box.alert = True
+            box.scale_y = 1.5
             box.operator("bone_renamer.rename_from_template",
-                        text="Apply Rename + Update Vertex Groups",
+                        text="Apply Rename",
                         icon='OUTLINER_DATA_ARMATURE')
         else:
             layout.label(text="Pilih atau buat template", icon='INFO')
