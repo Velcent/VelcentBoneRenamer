@@ -75,7 +75,7 @@ def get_case_type(suffix):
 def parse_side_name(name):
     """
     Parser UTAMA. Return:
-    (base_name, separator, case_type, is_prefix, side)
+    (base_name, separator, case_type, side)
     - base_name mengandung placeholder {side} di posisi token aslinya
     - side = 'L' / 'R' / None (None = tidak ada side valid)
     """
@@ -90,18 +90,16 @@ def parse_side_name(name):
         
         # Penentuan side L/R lebih bersih dan mendukung semua variasi (L, l, Left, LEFT, dll)
         side = 'L' if token.upper().startswith('L') else 'R'
-        is_prefix = (m.start('side') == 0)
+        return base_name, separator, get_case_type(token), side
         
-        return base_name, separator, get_case_type(token), is_prefix, side
-        
-    return name, '', 'upper', False, None
+    return name, '', 'upper', None
 
 def get_base_name_and_suffix(name):
     """Wrapper backward-compatible (4 nilai, tanpa side)"""
-    base, sep, case, is_prefix, _side = parse_side_name(name)
-    return base, sep, case, is_prefix
+    base, sep, case, _side = parse_side_name(name)
+    return base, sep, case
 
-def format_side(side, base_name, separator, case_type, is_prefix=False):
+def format_side(side, base_name, separator, case_type):
     """
     1 helper untuk semua format. Kalau base_name punya {side},
     posisi token otomatis ikut (depan / tengah / belakang).
@@ -119,15 +117,10 @@ def format_side(side, base_name, separator, case_type, is_prefix=False):
 
     if SIDE_TOKEN in base_name:
         return base_name.replace(SIDE_TOKEN, label)
-    
-    # fallback untuk template JSON lama (base_name tanpa placeholder)
-    if is_prefix:
-        return f"{label}{separator}{base_name}"
-    return f"{base_name}{separator}{label}"
 
 def format_suffix(side, separator, case_type):
     """Wrapper lama, biar kode lain tidak error"""
-    return format_side(side, '', separator, case_type, is_prefix=False)
+    return format_side(side, '', separator, case_type)
 
 def find_mirror_bone_by_name(bone, all_bones):
     """
@@ -135,11 +128,10 @@ def find_mirror_bone_by_name(bone, all_bones):
     Kriteria match:
     - base_name sama
     - separator sama
-    - is_prefix sama
     - side berlawanan (L ↔ R)
     Return: bone pasangan, atau None jika tidak ada.
     """
-    base, sep, _case, is_prefix, side = parse_side_name(bone.name)
+    base, sep, _case, side = parse_side_name(bone.name)
     if side is None:
         return None  # bone ini tidak punya token side → bukan mirror
 
@@ -149,12 +141,11 @@ def find_mirror_bone_by_name(bone, all_bones):
         if other.name == bone.name:
             continue
         
-        other_base, other_sep, _other_case, other_is_prefix, other_side = parse_side_name(other.name)
+        other_base, other_sep, _other_case, other_side = parse_side_name(other.name)
         
         if (other_base == base and
             other_side == opposite_side and
-            other_sep == sep and
-            other_is_prefix == is_prefix):
+            other_sep == sep):
             return other
             
     return None
@@ -199,13 +190,13 @@ def update_new_name_l(self, context):
         return
 
     name = self.new_name_l
-    base, sep, case, is_prefix, side = parse_side_name(name)
+    base, sep, case, side = parse_side_name(name)
 
     self["_mirror_updating"] = True
     try:
         if side == 'L':
-            l_name = format_side('L', base, sep, case, is_prefix)
-            r_name = format_side('R', base, sep, case, is_prefix)
+            l_name = format_side('L', base, sep, case)
+            r_name = format_side('R', base, sep, case)
             
             self["last_valid_new_name_l"] = l_name
             
@@ -279,7 +270,6 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
     separator: StringProperty(name="Separator")
     case_type: StringProperty(name="Case Type")
     is_mirror: BoolProperty(name="Is Mirror", default=False)
-    is_prefix: BoolProperty(name="Is Prefix", default=False)
     
     # Untuk single bone (non-mirror)
     old_name: StringProperty(name="Old Name")
@@ -298,7 +288,6 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
             'separator': self.separator,
             'case_type': self.case_type,
             'is_mirror': self.is_mirror,
-            'is_prefix': self.is_prefix,
         }
         if self.is_mirror:
             data['old_name_l'] = self.old_name_l
@@ -316,7 +305,6 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
         self.separator = data.get('separator', '')
         self.case_type = data.get('case_type', 'upper')
         self.is_mirror = data.get('is_mirror', False)
-        self.is_prefix = data.get('is_prefix', False)
         
         if self.is_mirror:
             self.old_name_l = data.get('old_name_l', '')
@@ -553,7 +541,7 @@ def add_bones_to_active_template(scene, bones_to_add, armature_obj, all_bones):
             continue
 
         # Parse nama bone
-        base_name, separator, case_type, is_prefix, side = parse_side_name(bone.name)
+        base_name, separator, case_type, side = parse_side_name(bone.name)
 
         if mirror_bone:
             # Mirror pair ditemukan dan belum ada di template
@@ -572,7 +560,6 @@ def add_bones_to_active_template(scene, bones_to_add, armature_obj, all_bones):
             bone_item.separator = separator
             bone_item.case_type = case_type
             bone_item.is_mirror = True
-            bone_item.is_prefix = is_prefix
             
             bone_item.old_name_l = l_bone.name
             bone_item.old_name_r = r_bone.name
