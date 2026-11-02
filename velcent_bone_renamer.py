@@ -32,6 +32,7 @@ if not os.path.exists(TEMPLATES_DIR):
 # ============================================================
 # SIDE DETECTION (L/R) — 1 sumber kebenaran untuk semua fungsi
 # ============================================================
+_TEMPLATE_ENUM_CACHE = []
 SIDE_TOKEN = "{side}"          # placeholder posisi L/R di dalam base_name
 
 # Token untuk semua variasi side
@@ -328,31 +329,58 @@ class TEMPLATE_BONE_ITEM(PropertyGroup):
 
 
 def get_template_enum_items(self, context):
-    """Callback untuk dropdown template"""
-    scene = context.scene
-    templates = scene.bone_renamer_template_list
-    items = []
-    for i, t in enumerate(templates):
-        # identifier = index (string), label = nama, description = jumlah bone
-        items.append((str(i), t.name, f"{t.bone_count} bones", 'PRESET', i))
-    if not items:
-        items.append(('NONE', 'Tidak ada template', '', 'INFO', 0))
-    return items
+    """Dropdown A-Z, identifier = NAMA template (stabil, bukan index)"""
+    global _TEMPLATE_ENUM_CACHE
+    templates = context.scene.bone_renamer_template_list
+
+    pairs = sorted(
+        [(t.name, t.bone_count) for t in templates],
+        key=lambda x: x[0].lower()
+    )
+
+    _TEMPLATE_ENUM_CACHE = [
+        (name, name, f"{count} bones", 'PRESET', i)
+        for i, (name, count) in enumerate(pairs)
+    ]
+
+    if not _TEMPLATE_ENUM_CACHE:
+        _TEMPLATE_ENUM_CACHE = [('NONE', "(No Template)", "", 'INFO', 0)]
+
+    return _TEMPLATE_ENUM_CACHE
+
 
 def on_template_enum_change(self, context):
-    """Dipanggil saat user ganti template via dropdown"""
-    if self.bone_renamer_template_enum == 'NONE':
+    if self.get("_enum_syncing", False):
         return
-    new_idx = int(self.bone_renamer_template_enum)
-    if self.bone_renamer_active_template_index != new_idx:
-        # Save dulu template lama, baru pindah
-        save_scene_templates_to_file(self)
-        self.bone_renamer_active_template_index = new_idx
-        data = load_templates_data()
-        templates = get_all_templates(self)
-        if 0 <= new_idx < len(templates):
-            data["active_template"] = templates[new_idx].name
-            save_templates_data(data)
+
+    val = self.bone_renamer_template_enum
+    if not val or val == 'NONE':
+        return
+
+    templates = self.bone_renamer_template_list
+    new_idx = next((i for i, t in enumerate(templates) if t.name == val), -1)
+
+    if new_idx < 0 or new_idx == self.bone_renamer_active_template_index:
+        return
+
+    save_scene_templates_to_file(self)
+    self.bone_renamer_active_template_index = new_idx
+
+    data = load_templates_data()
+    data["active_template"] = val
+    save_templates_data(data)
+
+
+def sync_template_enum(scene):
+    """Samakan nilai dropdown dengan template aktif (tanpa trigger update)"""
+    t = get_active_template(scene)
+    scene["_enum_syncing"] = True
+    try:
+        scene.bone_renamer_template_enum = t.name if t else 'NONE'
+    except TypeError:
+        pass          # nama belum ada di items (mis. saat clear)
+    finally:
+        scene["_enum_syncing"] = False
 
 
 class TEMPLATE_ITEM(PropertyGroup):
@@ -456,6 +484,7 @@ def load_templates_to_scene(scene):
             active_idx = i
 
     scene.bone_renamer_active_template_index = active_idx
+    sync_template_enum(scene)
 
 def save_scene_templates_to_file(scene):
     """Save scene templates ke file"""
@@ -622,6 +651,7 @@ class TEMPLATE_OT_new(bpy.types.Operator):
         
         # Save ke file
         save_scene_templates_to_file(scene)
+        sync_template_enum(scene)
         
         self.report({'INFO'}, f"Template '{self.name}' telah dibuat")
         return {'FINISHED'}
@@ -674,6 +704,7 @@ class TEMPLATE_OT_rename(bpy.types.Operator):
         template.name = new_name
         template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         save_scene_templates_to_file(scene)
+        sync_template_enum(scene)
 
         self.report({'INFO'}, f"'{old_name}' → '{new_name}'")
         return {'FINISHED'}
@@ -721,6 +752,7 @@ class TEMPLATE_OT_delete(bpy.types.Operator):
 
         # Save ke file
         save_scene_templates_to_file(scene)
+        sync_template_enum(scene)
         
         self.report({'INFO'}, f"Template '{t_name}' telah dihapus")
         return {'FINISHED'}
@@ -1011,6 +1043,7 @@ class TEMPLATE_OT_import(bpy.types.Operator):
 
         # Save ke file
         save_scene_templates_to_file(scene)
+        sync_template_enum(scene)
         
         self.report({'INFO'}, f"Template '{template_name}' telah di-import")
         return {'FINISHED'}
@@ -1188,15 +1221,15 @@ class VIEW3D_PT_bone_renamer(Panel):
 
         layout.separator()
 
-        # ===== TEMPLATES (Actions + Dropdown dalam 1 box) =====
+        # ===== TEMPLATES =====
         box = layout.box()
         box.label(text="Templates", icon='PRESET')
 
         # Row tombol actions
         row = box.row(align=True)
         row.operator("bone_renamer.new_template", text="", icon='ADD')
-        row.operator("bone_renamer.rename_template", text="", icon='OUTLINER_DATA_FONT')
-        row.operator("bone_renamer.delete_template", text="", icon='REMOVE')
+        row.operator("bone_renamer.rename_template", text="", icon='GREASEPENCIL')
+        row.operator("bone_renamer.delete_template", text="", icon='TRASH')
         row.separator()
         row.operator("bone_renamer.export_template", text="", icon='EXPORT')
         row.operator("bone_renamer.import_template", text="", icon='IMPORT')
@@ -1204,7 +1237,6 @@ class VIEW3D_PT_bone_renamer(Panel):
         row.operator("bone_renamer.refresh", text="", icon='FILE_REFRESH')
 
         # Dropdown template
-        box.separator()
         box.prop(scene, "bone_renamer_template_enum", text="")
 
         template = get_active_template(scene)
@@ -1287,7 +1319,7 @@ def register():
     bpy.types.Scene.bone_renamer_active_template_index = IntProperty(default=0)
     bpy.types.Scene.bone_renamer_active_bone_index = IntProperty(default=0)
     bpy.types.Scene.bone_renamer_template_enum = EnumProperty(
-        name="Template",
+        name="",
         items=get_template_enum_items,
         update=on_template_enum_change,
     )
@@ -1304,7 +1336,7 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.bone_renamer_template_enum   # ✅ BARU
+    del bpy.types.Scene.bone_renamer_template_enum
     del bpy.types.Scene.bone_renamer_active_bone_index
     del bpy.types.Scene.bone_renamer_active_template_index
     del bpy.types.Scene.bone_renamer_template_list
