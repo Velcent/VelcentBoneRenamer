@@ -848,6 +848,122 @@ class TEMPLATE_OT_clear_bones(bpy.types.Operator):
         self.report({'INFO'}, "Semua bone di template telah dihapus")
         return {'FINISHED'}
 
+
+class TEMPLATE_OT_rename_from_template(bpy.types.Operator):
+    """Rename bone berdasarkan template aktif + update vertex groups (Support Weight Paint)"""
+    bl_idname = "bone_renamer.rename_from_template"
+    bl_label = "Apply Rename from Template"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        armature_obj, mode_label = get_active_armature(context)
+        
+        if not armature_obj:
+            self.report({'ERROR'}, "Tidak ada armature aktif")
+            return {'CANCELLED'}
+
+        template = get_active_template(scene)
+        if not template:
+            self.report({'ERROR'}, "Tidak ada template aktif")
+            return {'CANCELLED'}
+
+        bones = template.bones
+        if len(bones) == 0:
+            self.report({'WARNING'}, "Template kosong")
+            return {'CANCELLED'}
+
+        # Simpan mode awal untuk dikembalikan nanti
+        original_obj = context.object
+        original_mode = original_obj.mode
+        
+        renamed_count = 0
+        skipped_count = 0
+        skipped_details = []
+
+        def try_rename(bone_collection, old_name, new_name):
+            nonlocal renamed_count, skipped_count
+            if old_name not in bone_collection:
+                skipped_count += 1
+                skipped_details.append(f"'{old_name}' (tidak ditemukan)")
+                return
+            if old_name == new_name:
+                skipped_count += 1
+                skipped_details.append(f"'{old_name}' (nama sama)")
+                return
+            if new_name in bone_collection:
+                skipped_count += 1
+                skipped_details.append(f"'{old_name}' → '{new_name}' (nama baru sudah ada)")
+                return
+                
+            bone_collection[old_name].name = new_name
+            renamed_count += 1
+
+        # Pilih collection bone berdasarkan mode
+        if mode_label == 'EDIT':
+            bone_collection = armature_obj.data.edit_bones
+        else:
+            # POSE, OBJECT, WEIGHT_PAINT → pakai obj.data.bones
+            bone_collection = armature_obj.data.bones
+
+        for bone_item in bones:
+            if bone_item.is_mirror:
+                try_rename(bone_collection, bone_item.old_name_l, bone_item.new_name_l)
+                try_rename(bone_collection, bone_item.old_name_r, bone_item.new_name_r)
+            else:
+                try_rename(bone_collection, bone_item.old_name, bone_item.new_name)
+
+        msg = f"{renamed_count} bone berhasil di-rename."
+        if skipped_count > 0:
+            msg += f" ({skipped_count} bone dilewati)."
+        self.report({'INFO'}, msg)
+
+        # Update vertex groups di SEMUA mesh child (termasuk mesh Weight Paint aktif)
+        if mode_label == 'WEIGHT_PAINT':
+            # Di Weight Paint, mesh aktif sudah pasti child dari armature
+            mesh_obj = original_obj
+            vg_count = 0
+            bone_names = set(b.name for b in armature_obj.data.bones)
+            
+            for vg in mesh_obj.vertex_groups:
+                if vg.name not in bone_names:
+                    base_vg, sep_vg, case_vg, _ = get_base_name_and_suffix(vg.name)
+                    for bone_name in bone_names:
+                        base_bone, sep_bone, case_bone, _ = get_base_name_and_suffix(bone_name)
+                        if base_vg == base_bone:
+                            vg.name = bone_name
+                            vg_count += 1
+                            break
+                            
+            if vg_count > 0:
+                self.report({'INFO'}, f"{vg_count} vertex group di mesh aktif telah diupdate")
+        else:
+            # Mode lain: gunakan helper standar
+            if original_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+                
+            vg_count = update_vertex_groups(armature_obj)
+            if vg_count > 0:
+                self.report({'INFO'}, f"{vg_count} vertex group telah diupdate")
+                
+            # Kembali ke mode awal
+            if original_mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='EDIT')
+            elif original_mode == 'POSE':
+                bpy.ops.object.mode_set(mode='POSE')
+
+        # Update modified time
+        template.modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_scene_templates_to_file(scene)
+
+        if skipped_details:
+            print(f"[Bone Renamer] Skipped bones pada '{template.name}':")
+            for detail in skipped_details:
+                print(f"  - {detail}")
+
+        return {'FINISHED'}
+
+
 class TEMPLATE_OT_select_bone(bpy.types.Operator):
     """Select bone dari list"""
     bl_idname = "bone_renamer.select_bone"
@@ -1299,6 +1415,7 @@ classes = (
     TEMPLATE_OT_remove_bone,
     TEMPLATE_OT_clear_bones,
     TEMPLATE_OT_select_bone,
+    TEMPLATE_OT_rename_from_template,
     TEMPLATE_OT_export,
     TEMPLATE_OT_import,
     TEMPLATE_OT_refresh,
